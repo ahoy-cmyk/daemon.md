@@ -13,6 +13,7 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 import graph_builder
+import metrics
 
 # Configure explicit paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -160,6 +161,10 @@ NEW RAW CONTENT TO INGEST:
                 response_mime_type="application/json",
             )
         )
+
+        # Track API Token Costs
+        if hasattr(response, 'usage_metadata'):
+            metrics.track_usage("daemon.py", MODEL_NAME, response.usage_metadata)
 
         try:
             # We expect a JSON array

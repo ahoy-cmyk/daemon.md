@@ -4,8 +4,10 @@ import logging
 import subprocess
 from pathlib import Path
 from google import genai
+from google.genai import errors
 from dotenv import load_dotenv
 import graph_builder
+import metrics
 
 # Configure explicit paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -109,19 +111,29 @@ def lint_wiki():
         return
 
     prompt = f"""
-You are the Synthesis Linter for an autonomous knowledge graph.
-Your job is to audit the entire wiki graph for:
-1. Logical contradictions
-2. Orphaned nodes (concepts/entities that are disconnected)
-3. Synthesis opportunities (where two separate notes could be combined or linked to form a stronger idea)
+You are the master Synthesis Linter for an autonomous Obsidian knowledge graph.
+Your singular directive is to audit the entire wiki graph, looking for the hidden architecture of thought.
 
-Review the following wiki contents (each section labeled with its filepath).
-Provide a structured markdown report detailing your findings and suggesting specific improvements.
+Review the vault contents provided within the <vault_content> tags below.
+You must produce a highly structured, beautiful Markdown report with the following exact sections:
 
-WIKI CONTENTS:
----
+# 🔮 Weekly Synthesis Report
+
+## 🚨 Logical Contradictions
+Identify areas where two notes seem to disagree or present conflicting information. Provide the file paths and explain the conflict. If none, say "No contradictions detected."
+
+## 👻 Orphaned Nodes
+Identify concepts or entities that are isolated. Suggest specific existing notes they should be linked to using `[[Wikilinks]]`.
+
+## ✨ Synthesis Opportunities
+Where can two separate notes be merged to form a stronger, unified thesis? Suggest new connections that are not explicitly stated but logically follow.
+
+## 🛠️ Actionable Recommendations
+Provide a checklist (`- [ ]`) of 3 to 5 specific things the user should do this week to improve the graph's structure or depth.
+
+<vault_content>
 {wiki_payload}
----
+</vault_content>
 """
 
     try:
@@ -129,6 +141,10 @@ WIKI CONTENTS:
             model=MODEL_NAME,
             contents=prompt,
         )
+
+        # Track API Token Costs
+        if hasattr(response, 'usage_metadata'):
+            metrics.track_usage("lint_wiki.py", MODEL_NAME, response.usage_metadata)
 
         with open(REPORT_PATH, "w", encoding="utf-8") as f:
             f.write(response.text)
@@ -143,6 +159,9 @@ WIKI CONTENTS:
 
         send_notification("Daemon.md Linter", "Weekly Maintenance Report generated.")
 
+    except errors.APIError as api_err:
+        logging.error(f"Gemini API Error during synthesis (Check token limits or quota): {api_err}")
+        send_notification("Daemon.md Linter Error", "Gemini API failed. See linter logs.")
     except Exception as e:
         logging.error(f"Failed to run synthesis linter: {e}")
         send_notification("Daemon.md Linter Error", "Failed to generate Maintenance Report.")

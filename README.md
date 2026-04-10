@@ -102,6 +102,7 @@ The behavior of the autonomous extraction is controlled entirely by the `GEMINI.
 
 - **Logs:** If the background daemon isn't working, check the `logs/` directory. It contains detailed Python application logs (`daemon.log`, `linter.log`) as well as `launchd` service logs.
 - **Failed Ingestion:** If a note dropped in `raw/` fails to process due to a parsing error or API limit, it will be moved to the `failed/` directory in your Vault. You can edit the file to fix any obvious issues and move it back to `raw/` to retry.
+- **Cost & Token Tracking:** Every time the Daemon or Linter runs, it records the exact number of Gemini API tokens consumed. You can monitor this by reading `logs/cost_tracker.jsonl`.
 - **Updating Daemon.md:** To pull the latest code and restart the background services, simply run:
   ```bash
   ./update.sh
