@@ -9,21 +9,28 @@ import threading
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 import graph_builder
 
-# Load environment variables
-load_dotenv()
+# Configure explicit paths
+SCRIPT_DIR = Path(__file__).parent.resolve()
 
-VAULT_PATH = os.getenv("VAULT_PATH")
+# Load environment variables explicitly from the script directory
+load_dotenv(SCRIPT_DIR / ".env")
+
+VAULT_PATH_RAW = os.getenv("VAULT_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not VAULT_PATH or not GEMINI_API_KEY:
+if not VAULT_PATH_RAW or not GEMINI_API_KEY:
     print("Error: VAULT_PATH and GEMINI_API_KEY must be set in .env")
     sys.exit(1)
 
-VAULT_DIR = Path(VAULT_PATH).expanduser().resolve()
+# Clean terminal escape characters (e.g. "Mobile\ Documents" -> "Mobile Documents")
+CLEANED_VAULT_PATH = VAULT_PATH_RAW.replace("\\ ", " ").replace("\\~", "~").replace('\\"', '"').replace("\\'", "'")
+
+VAULT_DIR = Path(CLEANED_VAULT_PATH).expanduser().resolve()
 RAW_DIR = VAULT_DIR / "raw"
 FAILED_DIR = VAULT_DIR / "failed"
 GEMINI_MD_PATH = VAULT_DIR / "GEMINI.md"
@@ -33,14 +40,13 @@ RAW_DIR.mkdir(parents=True, exist_ok=True)
 FAILED_DIR.mkdir(parents=True, exist_ok=True)
 
 # Configure Gemini
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Use 3.0 flash as requested
 # Depending on SDK version, we can configure json response.
 MODEL_NAME = "gemini-3.0-flash"
 
 # Configure Robust Rotating Logging
-SCRIPT_DIR = Path(__file__).parent.resolve()
 LOG_DIR = SCRIPT_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -56,9 +62,10 @@ logging.basicConfig(
 )
 
 def send_notification(title, message):
-    """Sends a native macOS push notification."""
-    escaped_title = title.replace('"', '\\"')
-    escaped_message = message.replace('"', '\\"')
+    """Sends a native macOS push notification safely."""
+    # Prevent AppleScript injection by fully escaping both backslashes and double quotes
+    escaped_title = title.replace('\\', '\\\\').replace('"', '\\"')
+    escaped_message = message.replace('\\', '\\\\').replace('"', '\\"')
     apple_script = f'display notification "{escaped_message}" with title "{escaped_title}"'
     subprocess.run(["osascript", "-e", apple_script])
 
@@ -125,12 +132,13 @@ NEW RAW CONTENT TO INGEST:
 """
 
         # Using generation_config for JSON mode
-        generation_config = genai.GenerationConfig(
-            response_mime_type="application/json",
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+            )
         )
-
-        model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config)
-        response = model.generate_content(prompt)
 
         try:
             # We expect a JSON array

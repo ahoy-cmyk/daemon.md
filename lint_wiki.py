@@ -3,32 +3,37 @@ import sys
 import logging
 import subprocess
 from pathlib import Path
-import google.generativeai as genai
+from google import genai
 from dotenv import load_dotenv
 import graph_builder
 
-# Load environment variables
-load_dotenv()
+# Configure explicit paths
+SCRIPT_DIR = Path(__file__).parent.resolve()
 
-VAULT_PATH = os.getenv("VAULT_PATH")
+# Load environment variables explicitly from the script directory
+load_dotenv(SCRIPT_DIR / ".env")
+
+VAULT_PATH_RAW = os.getenv("VAULT_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not VAULT_PATH or not GEMINI_API_KEY:
+if not VAULT_PATH_RAW or not GEMINI_API_KEY:
     print("Error: VAULT_PATH and GEMINI_API_KEY must be set in .env")
     sys.exit(1)
 
-VAULT_DIR = Path(VAULT_PATH).expanduser().resolve()
+# Clean terminal escape characters
+CLEANED_VAULT_PATH = VAULT_PATH_RAW.replace("\\ ", " ").replace("\\~", "~").replace('\\"', '"').replace("\\'", "'")
+
+VAULT_DIR = Path(CLEANED_VAULT_PATH).expanduser().resolve()
 WIKI_DIR = VAULT_DIR / "wiki"
 REPORT_PATH = VAULT_DIR / "Maintenance_Report.md"
 
 # Configure Gemini
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Use 3.1 pro for deep synthesis as requested
 MODEL_NAME = "gemini-3.1-pro"
 
 # Configure Robust Rotating Logging
-SCRIPT_DIR = Path(__file__).parent.resolve()
 LOG_DIR = SCRIPT_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -44,9 +49,10 @@ logging.basicConfig(
 )
 
 def send_notification(title, message):
-    """Sends a native macOS push notification."""
-    escaped_title = title.replace('"', '\\"')
-    escaped_message = message.replace('"', '\\"')
+    """Sends a native macOS push notification safely."""
+    # Prevent AppleScript injection by fully escaping both backslashes and double quotes
+    escaped_title = title.replace('\\', '\\\\').replace('"', '\\"')
+    escaped_message = message.replace('\\', '\\\\').replace('"', '\\"')
     apple_script = f'display notification "{escaped_message}" with title "{escaped_title}"'
     subprocess.run(["osascript", "-e", apple_script])
 
@@ -96,8 +102,10 @@ WIKI CONTENTS:
 """
 
     try:
-        model = genai.GenerativeModel(MODEL_NAME)
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
+        )
 
         with open(REPORT_PATH, "w", encoding="utf-8") as f:
             f.write(response.text)
