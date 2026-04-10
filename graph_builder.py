@@ -5,19 +5,22 @@ import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
-
-VAULT_PATH = os.getenv("VAULT_PATH")
 SCRIPT_DIR = Path(__file__).parent.resolve()
+load_dotenv(SCRIPT_DIR / ".env")
+
+VAULT_PATH_RAW = os.getenv("VAULT_PATH")
 VISUALIZER_PUBLIC_DIR = SCRIPT_DIR / "visualizer" / "public"
 
 def build_graph():
     """Generates a node/edge graph from the wiki directory."""
-    if not VAULT_PATH:
+    if not VAULT_PATH_RAW:
         logging.error("VAULT_PATH not set in .env. Cannot build graph.")
         return
 
-    vault_dir = Path(VAULT_PATH).expanduser().resolve()
+    # Clean terminal escape characters
+    CLEANED_VAULT_PATH = VAULT_PATH_RAW.replace("\\ ", " ").replace("\\~", "~").replace('\\"', '"').replace("\\'", "'")
+
+    vault_dir = Path(CLEANED_VAULT_PATH).expanduser().resolve()
     wiki_dir = vault_dir / "wiki"
 
     if not wiki_dir.exists():

@@ -1,108 +1,112 @@
-# Daemon.md
+# Daemon.md: Event-Driven Knowledge Compilation
 
-**Daemon.md** is a fully autonomous, self-seeding knowledge graph engine that lives entirely inside an Obsidian markdown vault on macOS.
+Daemon.md is an autonomous background engine designed to natively structure markdown notes inside a local Obsidian vault on macOS.
 
-Instead of traditional Retrieval-Augmented Generation (RAG) which searches for context *at query time*, Daemon.md uses **"Eager Compilation"**. When you drop a raw note into the inbox, a background daemon instantly uses Google's Gemini models to extract entities, map concepts, and autonomously write interconnected markdown files into your vault.
+Daemon.md replaces the reactive Retrieval-Augmented Generation (RAG) model with a proactive architecture known as **Eager Compilation**. Instead of relying on vector search at query time, the engine relies on immediate, deterministic transformation at ingestion time.
 
-It includes a native 3D visualizer to explore your semantic graph in real-time.
-
----
-
-## Features
-
-- 🧠 **Eager Compilation:** Drops unstructured `.md` files into the `raw/` inbox. They are instantly processed, categorized, and rewritten into your permanent wiki.
-- ⚡️ **Gemini Powered:** Uses `gemini-3.0-flash` for lightning-fast routing and JSON extraction, and `gemini-3.1-pro` for deep weekly synthesis.
-- 👻 **Ghost Nodes:** Aggressively uses `[[Wikilinks]]` to connect concepts. If a concept is linked but doesn't exist yet, it appears as a "Ghost Node" in your visualizer, showing the frontiers of your knowledge.
-- 🌌 **Latent Space Explorer:** A local Vite/React web application rendering a 3D semantic map of your vault.
-- 💻 **Frictionless macOS Integration:** Uses native macOS `launchd` for continuous background processing and `osascript` for native push notifications upon updates.
-
-## Prerequisites
-
-- **macOS** (This project utilizes macOS native tools like `launchctl` and `osascript`).
-- **Python 3** installed and available in your PATH.
-- **Node.js & npm** installed (for the 3D visualizer).
-- A **Google Gemini API Key**.
+When a raw `.md` file enters the inbox, a background `launchd` process leverages Google's Gemini API to analyze the text, map concepts to a local structural JSON representation, and autonomously write interconnected markdown files directly into the user's permanent file hierarchy.
 
 ---
 
-## Installation
+## I. Core Architecture
 
-1. **Clone the repository:**
-   Keep this project directory *outside* of your Obsidian Vault (e.g., in `~/Daemon_Engine`). The logic and data should remain separated.
+The Daemon.md system maintains a strict separation of logic and data. The execution engine (Python backend, Bash lifecycle utilities, Node.js visualizer) operates outside the vault boundaries, targeting the local directory via absolute paths to prevent repository pollution.
+
+### 1. The Ingestion Engine (`daemon.py`)
+A continuous Python process monitoring the `raw/` inbox directory. It uses the `watchdog` library to capture filesystem `on_created` events, supplemented by an `on_modified` handler to capture silent remote synchronizations (e.g., iCloud Drive). A 60-second polling sweep ensures eventual consistency if `FSEvents` are dropped by the OS.
+
+**Workflow:**
+1. A raw note is detected and locked via `threading.Lock()` to prevent race conditions.
+2. The daemon loads `latent_space.json`, providing the LLM with the complete structural topology of the vault without the token overhead of reading raw file contents.
+3. The context is routed to `gemini-3.1-flash-lite-preview`. The model natively outputs a structured JSON array, routing the analyzed data into three categories: Entities, Concepts, or Action Items.
+4. Target markdown files are completely rewritten to integrate the new context, avoiding fragmented append operations.
+5. The raw note is deleted, and a native macOS push notification is dispatched via `osascript`.
+
+### 2. The Synthesis Linter (`lint_wiki.py`)
+A `launchd` scheduled task (cron) executing every Sunday at 3:00 AM.
+The script recursively packages the entire knowledge graph into a secure XML `<vault_content>` payload and routes it to `gemini-3.1-pro-preview`. The reasoning model audits the graph structure and writes a `Maintenance_Report.md` to the vault root containing:
+- Logical contradictions detected across files.
+- Orphaned nodes requiring integration.
+- Structural synthesis opportunities.
+
+### 3. The Latent Space Explorer (`start_visualizer.sh`)
+Eager Compilation relies heavily on Obsidian-style `[[Wikilinks]]`. If the LLM generates a wikilink for a concept that does not currently possess a corresponding `.md` file, the engine classifies it as an unresolved **Ghost Node**.
+
+Following every ingestion or lint cycle, `graph_builder.py` parses the vault and generates a deterministic `latent_space.json` map. Running the Vite/React visualizer (`react-force-graph-3d`) renders this topology in a 3D interface, explicitly highlighting Ghost Nodes to identify missing knowledge frontiers.
+
+---
+
+## II. Security, Resilience, and Performance
+
+The application is engineered to run indefinitely as a local service, implementing several strict fault-tolerance and security mechanisms:
+
+- **Idempotent Setup:** The `install.sh` and `update.sh` lifecycle scripts utilize SHA-1 hash caching against `requirements.txt` and `package.json`. Package managers are invoked strictly when dependencies change, optimizing execution time.
+- **Context Optimization:** By supplying the LLM with `latent_space.json` rather than recursively feeding the vault contents during ingestion, API token consumption and request latency are radically reduced.
+- **Circuit Breakers:** If note processing fails due to network disruption, API quota limits, or invalid JSON schemas from the LLM, the raw file is moved to a `failed/` directory. This mitigates infinite retry loops and prevents API credit exhaustion.
+- **Token Tracking:** The application extracts `usage_metadata` from every Google API response, appending `prompt_tokens` and `candidates_tokens` to `logs/cost_tracker.jsonl` for deterministic cost auditing.
+- **Log Redaction:** A custom `APIRedactingFormatter` intercepts all output within the Python `logging` module, automatically scrubbing the user's `GEMINI_API_KEY` from disk logs and standard output streams.
+- **Injection Defenses:** Terminal escape characters associated with macOS iCloud paths are stripped natively. Shell scripts utilize bash parameter expansion (`${VAULT_PATH/#\~/$HOME}`) rather than `eval` to neutralize command injection. AppleScript notifications rigorously escape shell variables.
+
+---
+
+## III. Setup and Installation
+
+### Prerequisites
+- **macOS:** Required for `launchctl` and `osascript` compatibility.
+- **Python 3:** Required in `PATH`.
+- **Node.js & npm:** Required for the Vite visualizer.
+- **Google Gemini API Key:** Obtainable via [Google AI Studio](https://aistudio.google.com/apikey).
+
+### Deployment
+
+1. **Clone the Repository:**
+   Maintain the engine directory separately from the Obsidian Vault.
    ```bash
    git clone https://github.com/yourusername/daemon-md.git
    cd daemon-md
    ```
 
 2. **Configure Environment:**
-   Copy the example config and edit it to include your Gemini API key and the absolute path to where you want your Vault to live (e.g., in iCloud).
    ```bash
    cp .env.example .env
    nano .env
    ```
-   *Note: Ensure your `VAULT_PATH` is wrapped in quotes if it contains spaces (like iCloud drive paths).*
+   Provide the absolute path to your Obsidian vault. *Paths containing spaces must be wrapped in double quotes.*
 
-3. **Run the Installer:**
-   The `install.sh` script is a zero-terminal setup. It will:
-   - Scaffold the folder structure in your Vault.
-   - Generate the master `GEMINI.md` system prompt.
-   - Set up a Python virtual environment and install dependencies.
-   - Run `npm install` for the 3D Visualizer.
-   - Create and load macOS `launchd` plists to run the engine in the background.
+3. **Initialize System:**
    ```bash
    ./install.sh
    ```
+   The installer validates macOS Full Disk Access permissions, scaffolds the target vault directory structure, generates the `GEMINI.md` system instruction file, instantiates a local Python `venv`, and registers the `launchd` property list (`.plist`) agents.
+
+4. **Connect to Obsidian:**
+   - Open the **Obsidian** app on your Mac.
+   - Select **"Open folder as vault"**.
+   - Navigate to your designated `VAULT_PATH` and click **Open**.
+   - You can now drag and drop raw notes directly into the `raw/` folder within the Obsidian interface to trigger the Daemon.
 
 ---
 
-## Usage
+## IV. Lifecycle Management (CLI)
 
-### 1. The Ingestion Engine (`daemon.py`)
-Once installed, the daemon runs continuously in the background.
-Simply drop any new text, brain dump, or meeting note into the `raw/` folder in your Vault as an `.md` file.
+The repository provides modular bash utilities for system administration.
 
-Within seconds, you will receive a macOS push notification detailing the concepts, entities, or action items that were updated. The raw file will be deleted, and your permanent wiki will be updated.
-
-### 2. The Synthesis Linter (`lint_wiki.py`)
-A weekly cron job automatically runs every Sunday at 3:00 AM. It reads your entire knowledge graph, uses `gemini-3.1-pro` to audit for contradictions, orphaned nodes, and synthesis opportunities, and generates a `Maintenance_Report.md` at the root of your vault.
-
-### 3. The Latent Space Explorer
-To visualize your brain in 3D:
-```bash
-./start_visualizer.sh
-```
-This spins up a local Vite dev server. Open `http://localhost:5173` to explore.
-- 🔵 **Cyan:** Entities (People, Companies, Hardware)
-- 🟣 **Magenta:** Concepts (Frameworks, Theories, Projects)
-- ⚪️ **Grey:** Ghost Nodes (Unresolved Wikilinks)
+- `./status.sh`: Parses `launchctl` to verify daemon health, aggregates total token consumption from `cost_tracker.jsonl`, and outputs the latest rolling logs to the terminal.
+- `./update.sh`: Manages safe Git pulls (stashing uncommitted state), outputs a revision changelog, and invokes the idempotent installer to refresh dependencies and reload `launchd` services.
+- `./start_visualizer.sh`: Initiates the local Vite server on `localhost:5173` to render the 3D topology.
+- `./uninstall.sh`: Unloads and destroys the system `launchd` `.plist` files. It does not modify or delete the local repository or the target Vault.
 
 ---
 
-## Vault Architecture
+## V. Advanced Configuration
 
-The script automatically generates this structure at your designated `VAULT_PATH`:
+### Autonomous Extraction (GEMINI.md)
+The taxonomy and behavioral logic of the Daemon are controlled entirely by the `GEMINI.md` file located at the vault root. The default prompt is optimized for Gemini 3.1 architecture, instructing the model to utilize Chain-of-Thought processing prior to output generation. Modifying this file alters the Daemon's parsing and structural routing behavior dynamically.
 
-```text
-/Your_Vault/
-  ├── GEMINI.md (The master system prompt)
-  ├── raw/ (The inbox where new notes are dropped)
-  ├── wiki/
-  │   ├── entities/
-  │   └── concepts/
-  ├── Action_Items/ (Where executable tasks are saved)
-  └── Maintenance_Report.md (Generated weekly)
-```
+### Target Models
+The engine relies on the Google GenAI SDK. Default models are defined in `.env.example` and can be overridden:
+- `GEMINI_MODEL_DAEMON="gemini-3.1-flash-lite-preview"`
+- `GEMINI_MODEL_LINTER="gemini-3.1-pro-preview"`
 
-## Customizing the AI
-
-The behavior of the autonomous extraction is controlled entirely by the `GEMINI.md` file located at the root of your vault. You can edit this file at any time to give the daemon new instructions, change how it categorizes data, or update its markdown formatting rules.
-
-## Troubleshooting
-
-- **Logs:** If the background daemon isn't working, check `daemon.out.log` and `daemon.err.log` in the project directory.
-- **Restarting the Daemon:** If you need to restart the background processes manually:
-  ```bash
-  launchctl unload ~/Library/LaunchAgents/com.user.daemon.md.plist
-  launchctl load ~/Library/LaunchAgents/com.user.daemon.md.plist
-  ```
-- **Virtual Environment:** The system uses a local virtual environment located at `./venv`. If Python dependencies fail, try deleting the `./venv` folder and re-running `./install.sh`.
+### Logging
+Output streams from both the Python application and the macOS `launchd` service are routed to the `logs/` directory. Files (`daemon.log`, `linter.log`) utilize a `RotatingFileHandler` constrained to 5MB, maintaining a deterministic disk footprint over long-term operation.

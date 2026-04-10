@@ -4,67 +4,107 @@ import time
 import json
 import logging
 import subprocess
+import shutil
+import threading
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 import graph_builder
+import metrics
 
-# Load environment variables
-load_dotenv()
+# Configure explicit paths
+SCRIPT_DIR = Path(__file__).parent.resolve()
 
-VAULT_PATH = os.getenv("VAULT_PATH")
+# Load environment variables explicitly from the script directory
+load_dotenv(SCRIPT_DIR / ".env")
+
+VAULT_PATH_RAW = os.getenv("VAULT_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not VAULT_PATH or not GEMINI_API_KEY:
+if not VAULT_PATH_RAW or not GEMINI_API_KEY:
     print("Error: VAULT_PATH and GEMINI_API_KEY must be set in .env")
     sys.exit(1)
 
-VAULT_DIR = Path(VAULT_PATH).expanduser().resolve()
+# Clean terminal escape characters (e.g. "Mobile\ Documents" -> "Mobile Documents")
+CLEANED_VAULT_PATH = VAULT_PATH_RAW.replace("\\ ", " ").replace("\\~", "~").replace('\\"', '"').replace("\\'", "'")
+
+VAULT_DIR = Path(CLEANED_VAULT_PATH).expanduser().resolve()
 RAW_DIR = VAULT_DIR / "raw"
+FAILED_DIR = VAULT_DIR / "failed"
 GEMINI_MD_PATH = VAULT_DIR / "GEMINI.md"
 
-# Ensure raw directory exists (should be created by install.sh, but just in case)
+# Ensure directories exist
 RAW_DIR.mkdir(parents=True, exist_ok=True)
+FAILED_DIR.mkdir(parents=True, exist_ok=True)
 
 # Configure Gemini
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Use 3.0 flash as requested
-# Depending on SDK version, we can configure json response.
-MODEL_NAME = "gemini-3.0-flash"
+# Configurable models (default to 3.1 flash-lite if not provided)
+MODEL_NAME = os.getenv("GEMINI_MODEL_DAEMON", "gemini-3.1-flash-lite-preview")
+
+# Configure Robust Rotating Logging
+LOG_DIR = SCRIPT_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+class APIRedactingFormatter(logging.Formatter):
+    """Custom formatter to ensure API keys are never leaked in logs."""
+    def __init__(self, fmt, datefmt, api_key):
+        super().__init__(fmt, datefmt)
+        self.api_key = api_key
+
+    def format(self, record):
+        original_msg = super().format(record)
+        if self.api_key and self.api_key in original_msg:
+            return original_msg.replace(self.api_key, "***REDACTED_API_KEY***")
+        return original_msg
+
+from logging.handlers import RotatingFileHandler
+
+log_formatter = APIRedactingFormatter(
+    '%(asctime)s - %(message)s',
+    '%Y-%m-%d %H:%M:%S',
+    GEMINI_API_KEY
+)
+
+log_handler = RotatingFileHandler(
+    LOG_DIR / "daemon.log", maxBytes=5*1024*1024, backupCount=2
+)
+log_handler.setFormatter(log_formatter)
+
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(log_formatter)
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    handlers=[log_handler, stream_handler]
 )
 
 def send_notification(title, message):
-    """Sends a native macOS push notification."""
-    escaped_title = title.replace('"', '\\"')
-    escaped_message = message.replace('"', '\\"')
+    """Sends a native macOS push notification safely."""
+    # Prevent AppleScript injection by fully escaping both backslashes and double quotes
+    escaped_title = title.replace('\\', '\\\\').replace('"', '\\"')
+    escaped_message = message.replace('\\', '\\\\').replace('"', '\\"')
     apple_script = f'display notification "{escaped_message}" with title "{escaped_title}"'
     subprocess.run(["osascript", "-e", apple_script])
 
-def read_existing_wiki_contents():
-    """Reads all existing files in the vault to provide context for rewriting."""
-    # To properly rewrite files, the LLM needs to know what currently exists.
-    # We will build a map of filepaths and their current content.
-    wiki_context = ""
-    for root, dirs, files in os.walk(VAULT_DIR):
-        for file in files:
-            if file.endswith(".md") and "raw" not in root and file != "GEMINI.md":
-                file_path = Path(root) / file
-                rel_path = file_path.relative_to(VAULT_DIR)
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                    wiki_context += f"### Existing File: {rel_path}\n{content}\n\n"
-                except Exception as e:
-                    logging.error(f"Failed to read existing file for context {file_path}: {e}")
-    return wiki_context
+def get_graph_context():
+    """Reads latent_space.json to provide structural context instead of raw file reads."""
+    # Performance Optimization: Sending the entire vault content for every note ingestion
+    # burns massive API tokens and causes extreme latency as the vault grows.
+    # Instead, we pass the latent_space.json map. The LLM can use this to know
+    # what concepts exist and how they are structured without reading every word.
+    context_file = SCRIPT_DIR / "visualizer" / "public" / "latent_space.json"
+    if context_file.exists():
+        try:
+            with open(context_file, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception as e:
+            logging.error(f"Failed to read graph context: {e}")
+    return '{"nodes":[],"links":[]}'
 
 def process_raw_file(file_path):
     """Processes a new raw markdown file with Gemini."""
@@ -83,7 +123,7 @@ def process_raw_file(file_path):
             with open(GEMINI_MD_PATH, "r", encoding="utf-8") as f:
                 master_prompt = f.read()
 
-        existing_wiki_context = read_existing_wiki_contents()
+        graph_context = get_graph_context()
 
         prompt = f"""
 {master_prompt}
@@ -91,7 +131,7 @@ def process_raw_file(file_path):
 You are an automated knowledge extraction system.
 Analyze the following newly added markdown content.
 
-If the information updates existing knowledge, output a 'wiki_update'. For wiki_updates, you MUST rewrite the ENTIRE existing target file (if any) with the new context seamlessly integrated. Do not just append. We have provided the existing contents of the vault below.
+If the information updates existing knowledge, output a 'wiki_update'. For wiki_updates, you MUST rewrite the ENTIRE existing target file (if any) with the new context seamlessly integrated. Do not just append. We have provided the existing semantic map of the vault below so you know what files already exist to update.
 If the information is an actionable task or an action item executed, output a 'task_completion'.
 
 Output your response strictly as a JSON array of objects, where each object has:
@@ -99,9 +139,9 @@ Output your response strictly as a JSON array of objects, where each object has:
 - `filepath`: The relative path within the vault where this should be written (e.g., "wiki/concepts/AI.md" or "Action_Items/Task1.md")
 - `content`: The complete, fully written markdown content to be saved to the file.
 
-EXISTING VAULT CONTENTS (Use this to rewrite files accurately without losing existing info):
+EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowledge base):
 ---
-{existing_wiki_context}
+{graph_context}
 ---
 
 NEW RAW CONTENT TO INGEST:
@@ -111,12 +151,17 @@ NEW RAW CONTENT TO INGEST:
 """
 
         # Using generation_config for JSON mode
-        generation_config = genai.GenerationConfig(
-            response_mime_type="application/json",
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+            )
         )
 
-        model = genai.GenerativeModel(MODEL_NAME, generation_config=generation_config)
-        response = model.generate_content(prompt)
+        # Track API Token Costs
+        if hasattr(response, 'usage_metadata'):
+            metrics.track_usage("daemon.py", MODEL_NAME, response.usage_metadata)
 
         try:
             # We expect a JSON array
@@ -124,7 +169,11 @@ NEW RAW CONTENT TO INGEST:
         except json.JSONDecodeError as e:
             logging.error(f"Failed to parse Gemini output as JSON: {e}")
             logging.error(f"Raw output: {response.text}")
-            send_notification("Daemon.md Error", "Failed to parse Gemini output as JSON.")
+            # Move to failed directory to prevent infinite retry loops
+            failed_path = FAILED_DIR / file_path.name
+            shutil.move(str(file_path), str(failed_path))
+            logging.info(f"Moved unparseable raw file to {failed_path}")
+            send_notification("Daemon.md Error", "Failed to parse Gemini output as JSON. File moved to failed/")
             return
 
         actions_taken = []
@@ -167,21 +216,59 @@ NEW RAW CONTENT TO INGEST:
 
     except Exception as e:
         logging.error(f"Error processing {file_path.name}: {e}")
-        send_notification("Daemon.md Error", f"Failed to process {file_path.name}")
+        # Move to failed directory to prevent infinite retry loops
+        try:
+            failed_path = FAILED_DIR / file_path.name
+            shutil.move(str(file_path), str(failed_path))
+            logging.info(f"Moved errored raw file to {failed_path}")
+            send_notification("Daemon.md Error", f"Failed to process {file_path.name}. File moved to failed/")
+        except Exception as move_e:
+            logging.error(f"Failed to move {file_path.name} to failed directory: {move_e}")
+            send_notification("Daemon.md Error", f"Critical Error processing {file_path.name}")
+processing_files = set()
+processing_lock = threading.Lock()
+
+def safe_process_raw_file(file_path):
+    """Wrapper to prevent duplicate processing of the same file."""
+    path_str = str(file_path)
+
+    with processing_lock:
+        if path_str in processing_files:
+            return
+        processing_files.add(path_str)
+
+    try:
+        process_raw_file(file_path)
+    finally:
+        with processing_lock:
+            if path_str in processing_files:
+                processing_files.remove(path_str)
 
 class RawFolderHandler(FileSystemEventHandler):
     def on_created(self, event):
         if not event.is_directory and event.src_path.endswith('.md'):
             # Small delay to ensure file is completely written before reading
             time.sleep(1)
-            process_raw_file(event.src_path)
+            safe_process_raw_file(event.src_path)
 
     def on_moved(self, event):
         # Catch files moved/renamed into the directory
         if not event.is_directory and event.dest_path.endswith('.md'):
             if Path(event.dest_path).parent == RAW_DIR:
                 time.sleep(1)
-                process_raw_file(event.dest_path)
+                safe_process_raw_file(event.dest_path)
+
+    def on_modified(self, event):
+        # Catch files synced via iCloud that may bypass creation events
+        if not event.is_directory and event.src_path.endswith('.md'):
+            time.sleep(1)
+            safe_process_raw_file(event.src_path)
+
+def periodic_scan():
+    """Fallback scanner to catch files if filesystem events fail (common on iCloud)."""
+    for file in RAW_DIR.glob("*.md"):
+        if file.exists():
+            safe_process_raw_file(file)
 
 def main():
     logging.info(f"Starting Daemon.md watching {RAW_DIR}")
@@ -192,12 +279,13 @@ def main():
     observer.start()
 
     # Process any files that are already in the raw directory on startup
-    for file in RAW_DIR.glob("*.md"):
-        process_raw_file(file)
+    periodic_scan()
 
     try:
         while True:
-            time.sleep(1)
+            # Lazy sweep every 60 seconds as a highly efficient fallback to watchdog
+            time.sleep(60)
+            periodic_scan()
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
