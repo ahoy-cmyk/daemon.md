@@ -1,0 +1,32 @@
+Hey Jules,
+
+I've just completed a security and performance audit of the `Daemon.md` project. I need you to implement fixes for the issues I found. Please review the attached `audit_report.md` (or see the summary below) and update the codebase accordingly.
+
+Here are the specific tasks you need to complete:
+
+**1. Fix the Directory Traversal Vulnerability (Critical Security)**
+- In `daemon.py`, the `rel_path` from the LLM output is concatenated blindly to `VAULT_DIR`.
+- **Action:** Update the file writing logic to use `pathlib` to resolve the `target_path` and verify that `target_path.resolve().is_relative_to(VAULT_DIR.resolve())`. If it's not relative, log an error and reject the update.
+
+**2. Fix the AppleScript Command Injection Vulnerability (High Security)**
+- In both `daemon.py` and `lint_wiki.py`, the `send_notification` function interpolates strings directly into the `osascript` command string.
+- **Action:** Refactor `send_notification` to pass the title and message securely as command-line arguments to the AppleScript block, like so:
+  ```python
+  subprocess.run([
+      "osascript",
+      "-e", 'on run argv',
+      "-e", 'display notification (item 2 of argv) with title (item 1 of argv)',
+      "-e", 'end run',
+      title, message
+  ])
+  ```
+
+**3. Fix the Blocking Watchdog Dispatcher (Critical Performance)**
+- In `daemon.py`, `watchdog` events call `safe_process_raw_file` synchronously, which blocks the main event loop while waiting for the Gemini API.
+- **Action:** Implement a `concurrent.futures.ThreadPoolExecutor` (or similar mechanism) in `daemon.py` to offload the `safe_process_raw_file` execution so that the watchdog event handler can return immediately.
+
+**4. Optimize Graph Building (Medium Performance)**
+- In `graph_builder.py`, the script walks the `wiki_dir` twice (once to collect IDs, once to read contents).
+- **Action:** Refactor `build_graph()` to accomplish this in a single pass over the filesystem.
+
+Please make these changes, verify that the scripts still run correctly, and submit the updates. Thank you!
