@@ -42,8 +42,8 @@ FAILED_DIR.mkdir(parents=True, exist_ok=True)
 # Configure Gemini
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Configurable models (default to 3.1 flash if not provided)
-MODEL_NAME = os.getenv("GEMINI_MODEL_DAEMON", "gemini-3.1-flash")
+# Configurable models (default to 3.1 flash-lite if not provided)
+MODEL_NAME = os.getenv("GEMINI_MODEL_DAEMON", "gemini-3.1-flash-lite-preview")
 
 # Configure Robust Rotating Logging
 LOG_DIR = SCRIPT_DIR / "logs"

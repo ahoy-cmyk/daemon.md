@@ -11,7 +11,7 @@ It includes a native 3D visualizer to explore your semantic graph in real-time.
 ## Features
 
 - 🧠 **Eager Compilation:** Drops unstructured `.md` files into the `raw/` inbox. They are instantly processed, categorized, and rewritten into your permanent wiki.
-- ⚡️ **Gemini Powered:** Fully configurable AI backend. Defaults to `gemini-3.1-flash` for lightning-fast routing and JSON extraction, and `gemini-3.1-pro` for deep weekly synthesis.
+- ⚡️ **Gemini Powered:** Fully configurable AI backend. Defaults to `gemini-3.1-flash-lite-preview` for lightning-fast routing and JSON extraction, and `gemini-3.1-pro-preview` for deep weekly synthesis.
 - 👻 **Ghost Nodes:** Aggressively uses `[[Wikilinks]]` to connect concepts. If a concept is linked but doesn't exist yet, it appears as a "Ghost Node" in your visualizer, showing the frontiers of your knowledge.
 - 🌌 **Latent Space Explorer:** A local Vite/React web application rendering a 3D semantic map of your vault.
 - 💻 **Frictionless macOS Integration:** Uses native macOS `launchd` for continuous background processing and `osascript` for native push notifications upon updates.

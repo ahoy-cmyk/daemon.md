@@ -31,7 +31,7 @@ REPORT_PATH = VAULT_DIR / "Maintenance_Report.md"
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Configurable models (default to 3.1 pro if not provided)
-MODEL_NAME = os.getenv("GEMINI_MODEL_LINTER", "gemini-3.1-pro")
+MODEL_NAME = os.getenv("GEMINI_MODEL_LINTER", "gemini-3.1-pro-preview")
 
 # Configure Robust Rotating Logging
 LOG_DIR = SCRIPT_DIR / "logs"
