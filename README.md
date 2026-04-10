@@ -86,6 +86,7 @@ The script automatically generates this structure at your designated `VAULT_PATH
 /Your_Vault/
   ├── GEMINI.md (The master system prompt)
   ├── raw/ (The inbox where new notes are dropped)
+  ├── failed/ (Where unparseable raw notes are moved)
   ├── wiki/
   │   ├── entities/
   │   └── concepts/
@@ -99,8 +100,17 @@ The behavior of the autonomous extraction is controlled entirely by the `GEMINI.
 
 ## Troubleshooting
 
-- **Logs:** If the background daemon isn't working, check `daemon.out.log` and `daemon.err.log` in the project directory.
-- **Restarting the Daemon:** If you need to restart the background processes manually:
+- **Logs:** If the background daemon isn't working, check the `logs/` directory. It contains detailed Python application logs (`daemon.log`, `linter.log`) as well as `launchd` service logs.
+- **Failed Ingestion:** If a note dropped in `raw/` fails to process due to a parsing error or API limit, it will be moved to the `failed/` directory in your Vault. You can edit the file to fix any obvious issues and move it back to `raw/` to retry.
+- **Updating Daemon.md:** To pull the latest code and restart the background services, simply run:
+  ```bash
+  ./update.sh
+  ```
+- **Uninstalling:** To remove the background services from your system (this does not delete your Vault or the code):
+  ```bash
+  ./uninstall.sh
+  ```
+- **Restarting the Daemon:** If you need to restart the background processes manually, run `./install.sh` again, or use:
   ```bash
   launchctl unload ~/Library/LaunchAgents/com.user.daemon.md.plist
   launchctl load ~/Library/LaunchAgents/com.user.daemon.md.plist

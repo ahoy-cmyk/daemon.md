@@ -27,10 +27,20 @@ genai.configure(api_key=GEMINI_API_KEY)
 # Use 3.1 pro for deep synthesis as requested
 MODEL_NAME = "gemini-3.1-pro"
 
+# Configure Robust Rotating Logging
+SCRIPT_DIR = Path(__file__).parent.resolve()
+LOG_DIR = SCRIPT_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+from logging.handlers import RotatingFileHandler
+log_handler = RotatingFileHandler(
+    LOG_DIR / "linter.log", maxBytes=5*1024*1024, backupCount=2
+)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[log_handler, logging.StreamHandler(sys.stdout)]
 )
 
 def send_notification(title, message):

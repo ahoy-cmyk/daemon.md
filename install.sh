@@ -33,6 +33,7 @@ VAULT_ABS_PATH=$(eval echo "$VAULT_PATH")
 
 echo "Creating Vault directory structure at: $VAULT_ABS_PATH"
 mkdir -p "$VAULT_ABS_PATH/raw"
+mkdir -p "$VAULT_ABS_PATH/failed"
 mkdir -p "$VAULT_ABS_PATH/wiki/entities"
 mkdir -p "$VAULT_ABS_PATH/wiki/concepts"
 mkdir -p "$VAULT_ABS_PATH/Action_Items"
@@ -99,6 +100,10 @@ else
     echo "Warning: visualizer directory not found. Skipping npm install."
 fi
 
+# Setup centralized logging
+LOGS_DIR="$SCRIPT_DIR/logs"
+mkdir -p "$LOGS_DIR"
+
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 mkdir -p "$LAUNCH_AGENTS_DIR"
 
@@ -125,9 +130,9 @@ cat << EOF > "$DAEMON_PLIST_PATH"
     <key>KeepAlive</key>
     <true/>
     <key>StandardErrorPath</key>
-    <string>$SCRIPT_DIR/daemon.err.log</string>
+    <string>$LOGS_DIR/daemon.launchd.err.log</string>
     <key>StandardOutPath</key>
-    <string>$SCRIPT_DIR/daemon.out.log</string>
+    <string>$LOGS_DIR/daemon.launchd.out.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -162,9 +167,9 @@ cat << EOF > "$LINTER_PLIST_PATH"
         <integer>0</integer>
     </dict>
     <key>StandardErrorPath</key>
-    <string>$SCRIPT_DIR/linter.err.log</string>
+    <string>$LOGS_DIR/linter.launchd.err.log</string>
     <key>StandardOutPath</key>
-    <string>$SCRIPT_DIR/linter.out.log</string>
+    <string>$LOGS_DIR/linter.launchd.out.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -182,4 +187,4 @@ launchctl load "$DAEMON_PLIST_PATH"
 launchctl load "$LINTER_PLIST_PATH"
 
 echo "Installation complete! Daemon.md is now running in the background."
-echo "Logs can be found in the current directory: daemon.out.log and daemon.err.log"
+echo "Logs can be found in the logs/ directory."

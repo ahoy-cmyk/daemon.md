@@ -4,6 +4,8 @@ import time
 import json
 import logging
 import subprocess
+import shutil
+import threading
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -23,10 +25,12 @@ if not VAULT_PATH or not GEMINI_API_KEY:
 
 VAULT_DIR = Path(VAULT_PATH).expanduser().resolve()
 RAW_DIR = VAULT_DIR / "raw"
+FAILED_DIR = VAULT_DIR / "failed"
 GEMINI_MD_PATH = VAULT_DIR / "GEMINI.md"
 
-# Ensure raw directory exists (should be created by install.sh, but just in case)
+# Ensure directories exist
 RAW_DIR.mkdir(parents=True, exist_ok=True)
+FAILED_DIR.mkdir(parents=True, exist_ok=True)
 
 # Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
@@ -35,10 +39,20 @@ genai.configure(api_key=GEMINI_API_KEY)
 # Depending on SDK version, we can configure json response.
 MODEL_NAME = "gemini-3.0-flash"
 
+# Configure Robust Rotating Logging
+SCRIPT_DIR = Path(__file__).parent.resolve()
+LOG_DIR = SCRIPT_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+from logging.handlers import RotatingFileHandler
+log_handler = RotatingFileHandler(
+    LOG_DIR / "daemon.log", maxBytes=5*1024*1024, backupCount=2
+)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[log_handler, logging.StreamHandler(sys.stdout)]
 )
 
 def send_notification(title, message):
@@ -124,7 +138,11 @@ NEW RAW CONTENT TO INGEST:
         except json.JSONDecodeError as e:
             logging.error(f"Failed to parse Gemini output as JSON: {e}")
             logging.error(f"Raw output: {response.text}")
-            send_notification("Daemon.md Error", "Failed to parse Gemini output as JSON.")
+            # Move to failed directory to prevent infinite retry loops
+            failed_path = FAILED_DIR / file_path.name
+            shutil.move(str(file_path), str(failed_path))
+            logging.info(f"Moved unparseable raw file to {failed_path}")
+            send_notification("Daemon.md Error", "Failed to parse Gemini output as JSON. File moved to failed/")
             return
 
         actions_taken = []
@@ -167,21 +185,53 @@ NEW RAW CONTENT TO INGEST:
 
     except Exception as e:
         logging.error(f"Error processing {file_path.name}: {e}")
-        send_notification("Daemon.md Error", f"Failed to process {file_path.name}")
+        # Move to failed directory to prevent infinite retry loops
+        try:
+            failed_path = FAILED_DIR / file_path.name
+            shutil.move(str(file_path), str(failed_path))
+            logging.info(f"Moved errored raw file to {failed_path}")
+            send_notification("Daemon.md Error", f"Failed to process {file_path.name}. File moved to failed/")
+        except Exception as move_e:
+            logging.error(f"Failed to move {file_path.name} to failed directory: {move_e}")
+            send_notification("Daemon.md Error", f"Critical Error processing {file_path.name}")
+processing_files = set()
+processing_lock = threading.Lock()
+
+def safe_process_raw_file(file_path):
+    """Wrapper to prevent duplicate processing of the same file."""
+    path_str = str(file_path)
+
+    with processing_lock:
+        if path_str in processing_files:
+            return
+        processing_files.add(path_str)
+
+    try:
+        process_raw_file(file_path)
+    finally:
+        with processing_lock:
+            if path_str in processing_files:
+                processing_files.remove(path_str)
 
 class RawFolderHandler(FileSystemEventHandler):
     def on_created(self, event):
         if not event.is_directory and event.src_path.endswith('.md'):
             # Small delay to ensure file is completely written before reading
             time.sleep(1)
-            process_raw_file(event.src_path)
+            safe_process_raw_file(event.src_path)
 
     def on_moved(self, event):
         # Catch files moved/renamed into the directory
         if not event.is_directory and event.dest_path.endswith('.md'):
             if Path(event.dest_path).parent == RAW_DIR:
                 time.sleep(1)
-                process_raw_file(event.dest_path)
+                safe_process_raw_file(event.dest_path)
+
+def periodic_scan():
+    """Fallback scanner to catch files if filesystem events fail (common on iCloud)."""
+    for file in RAW_DIR.glob("*.md"):
+        if file.exists():
+            safe_process_raw_file(file)
 
 def main():
     logging.info(f"Starting Daemon.md watching {RAW_DIR}")
@@ -192,12 +242,13 @@ def main():
     observer.start()
 
     # Process any files that are already in the raw directory on startup
-    for file in RAW_DIR.glob("*.md"):
-        process_raw_file(file)
+    periodic_scan()
 
     try:
         while True:
-            time.sleep(1)
+            # Poll every 5 seconds as a fallback to watchdog
+            time.sleep(5)
+            periodic_scan()
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
