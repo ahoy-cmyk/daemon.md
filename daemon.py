@@ -91,23 +91,20 @@ def send_notification(title, message):
     apple_script = f'display notification "{escaped_message}" with title "{escaped_title}"'
     subprocess.run(["osascript", "-e", apple_script])
 
-def read_existing_wiki_contents():
-    """Reads all existing files in the vault to provide context for rewriting."""
-    # To properly rewrite files, the LLM needs to know what currently exists.
-    # We will build a map of filepaths and their current content.
-    wiki_context = ""
-    for root, dirs, files in os.walk(VAULT_DIR):
-        for file in files:
-            if file.endswith(".md") and "raw" not in root and file != "GEMINI.md":
-                file_path = Path(root) / file
-                rel_path = file_path.relative_to(VAULT_DIR)
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                    wiki_context += f"### Existing File: {rel_path}\n{content}\n\n"
-                except Exception as e:
-                    logging.error(f"Failed to read existing file for context {file_path}: {e}")
-    return wiki_context
+def get_graph_context():
+    """Reads latent_space.json to provide structural context instead of raw file reads."""
+    # Performance Optimization: Sending the entire vault content for every note ingestion
+    # burns massive API tokens and causes extreme latency as the vault grows.
+    # Instead, we pass the latent_space.json map. The LLM can use this to know
+    # what concepts exist and how they are structured without reading every word.
+    context_file = SCRIPT_DIR / "visualizer" / "public" / "latent_space.json"
+    if context_file.exists():
+        try:
+            with open(context_file, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception as e:
+            logging.error(f"Failed to read graph context: {e}")
+    return '{"nodes":[],"links":[]}'
 
 def process_raw_file(file_path):
     """Processes a new raw markdown file with Gemini."""
@@ -126,7 +123,7 @@ def process_raw_file(file_path):
             with open(GEMINI_MD_PATH, "r", encoding="utf-8") as f:
                 master_prompt = f.read()
 
-        existing_wiki_context = read_existing_wiki_contents()
+        graph_context = get_graph_context()
 
         prompt = f"""
 {master_prompt}
@@ -134,7 +131,7 @@ def process_raw_file(file_path):
 You are an automated knowledge extraction system.
 Analyze the following newly added markdown content.
 
-If the information updates existing knowledge, output a 'wiki_update'. For wiki_updates, you MUST rewrite the ENTIRE existing target file (if any) with the new context seamlessly integrated. Do not just append. We have provided the existing contents of the vault below.
+If the information updates existing knowledge, output a 'wiki_update'. For wiki_updates, you MUST rewrite the ENTIRE existing target file (if any) with the new context seamlessly integrated. Do not just append. We have provided the existing semantic map of the vault below so you know what files already exist to update.
 If the information is an actionable task or an action item executed, output a 'task_completion'.
 
 Output your response strictly as a JSON array of objects, where each object has:
@@ -142,9 +139,9 @@ Output your response strictly as a JSON array of objects, where each object has:
 - `filepath`: The relative path within the vault where this should be written (e.g., "wiki/concepts/AI.md" or "Action_Items/Task1.md")
 - `content`: The complete, fully written markdown content to be saved to the file.
 
-EXISTING VAULT CONTENTS (Use this to rewrite files accurately without losing existing info):
+EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowledge base):
 ---
-{existing_wiki_context}
+{graph_context}
 ---
 
 NEW RAW CONTENT TO INGEST:

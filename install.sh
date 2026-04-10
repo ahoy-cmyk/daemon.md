@@ -1,13 +1,23 @@
 #!/bin/bash
 
+# --- Color Constants ---
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+BOLD='\033[1m'
+
+echo -e "\n${BOLD}${CYAN}Initializing Daemon.md Setup...${NC}\n"
+
 # Ensure the script is run from the project directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 cd "$SCRIPT_DIR"
 
 # Check if .env exists
 if [ ! -f .env ]; then
-    echo "Error: .env file not found."
-    echo "Please copy .env.example to .env and configure your VAULT_PATH and GEMINI_API_KEY."
+    echo -e "${RED}[✗] Error: .env file not found.${NC}"
+    echo -e "Please copy .env.example to .env and configure your VAULT_PATH and GEMINI_API_KEY."
     exit 1
 fi
 
@@ -24,14 +34,24 @@ while IFS='=' read -r key value; do
 done < .env
 
 if [ -z "$VAULT_PATH" ]; then
-    echo "Error: VAULT_PATH is not set in .env."
+    echo -e "${RED}[✗] Error: VAULT_PATH is not set in .env.${NC}"
     exit 1
 fi
 
-# Resolve the absolute path of the vault (eval handles ~ expansion safely here)
-VAULT_ABS_PATH=$(eval echo "$VAULT_PATH")
+# Resolve the absolute path of the vault securely (preventing command injection)
+VAULT_ABS_PATH="${VAULT_PATH/#\~/$HOME}"
 
-echo "Creating Vault directory structure at: $VAULT_ABS_PATH"
+# Test read/write permissions (crucial for iCloud paths and macOS FDA)
+if ! touch "$VAULT_ABS_PATH/.daemon_test_write" 2>/dev/null; then
+    echo -e "${RED}[✗] Permission Denied: Cannot write to $VAULT_ABS_PATH${NC}"
+    echo -e "${YELLOW}macOS explicitly protects iCloud and Desktop paths. You must grant your Terminal app 'Full Disk Access' in System Settings > Privacy & Security.${NC}"
+    exit 1
+fi
+rm -f "$VAULT_ABS_PATH/.daemon_test_write"
+
+echo -e "  [${GREEN}✓${NC}] Path Permissions Verified"
+
+echo -e "  [${CYAN}⚙${NC}] Scaffolding Vault directory structure..."
 mkdir -p "$VAULT_ABS_PATH/raw"
 mkdir -p "$VAULT_ABS_PATH/failed"
 mkdir -p "$VAULT_ABS_PATH/wiki/entities"
@@ -41,7 +61,7 @@ mkdir -p "$VAULT_ABS_PATH/Action_Items"
 # Generate the boilerplate GEMINI.md master prompt if it doesn't exist
 GEMINI_MD_PATH="$VAULT_ABS_PATH/GEMINI.md"
 if [ ! -f "$GEMINI_MD_PATH" ]; then
-    echo "Generating boilerplate GEMINI.md..."
+    echo -e "  [${CYAN}⚙${NC}] Generating boilerplate GEMINI.md master prompt..."
     cat << 'EOF' > "$GEMINI_MD_PATH"
 # Role and Objective
 You are Daemon.md, an autonomous knowledge extraction engine.
@@ -60,49 +80,70 @@ When provided with raw text, you must analyze it and categorize it into the foll
 - Synthesize information; do not just copy-paste. Distill the raw input into its most valuable core truths.
 EOF
 else
-    echo "GEMINI.md already exists, skipping."
+    echo -e "  [${GREEN}✓${NC}] GEMINI.md already exists, skipping generation."
 fi
 
-# Check for dependencies
+echo -e "\n${BOLD}${CYAN}Resolving Dependencies...${NC}"
+
+# Check for core dependencies
 SYSTEM_PYTHON=$(command -v python3)
 if [ -z "$SYSTEM_PYTHON" ]; then
-    echo "Error: python3 is not installed or not in PATH."
-    echo "Please install Python 3 and try again."
+    echo -e "${RED}[✗] Error: python3 is not installed or not in PATH.${NC}"
     exit 1
 fi
 
 if ! command -v npm &> /dev/null; then
-    echo "Error: npm is not installed or not in PATH."
-    echo "Please install Node.js and npm and try again."
+    echo -e "${RED}[✗] Error: npm is not installed or not in PATH.${NC}"
     exit 1
 fi
 
-# Setup Python Virtual Environment
+echo -e "  [${GREEN}✓${NC}] python3 and npm found in PATH."
+
+# --- Python Dependencies with Hash Caching ---
 VENV_DIR="$SCRIPT_DIR/venv"
+PY_HASH_FILE="$VENV_DIR/.req_hash"
+
 if [ ! -d "$VENV_DIR" ]; then
-    echo "Creating Python virtual environment..."
+    echo -e "  [${CYAN}⚙${NC}] Creating Python virtual environment..."
     "$SYSTEM_PYTHON" -m venv "$VENV_DIR"
 fi
 
-# Use the venv's python and pip
 PYTHON_PATH="$VENV_DIR/bin/python"
 PIP_PATH="$VENV_DIR/bin/pip"
 
-echo "Installing required Python packages..."
-"$PIP_PATH" install -r "$SCRIPT_DIR/requirements.txt"
-
-echo "Setting up Latent Space Explorer (Visualizer)..."
-if [ -d "$SCRIPT_DIR/visualizer" ]; then
-    cd "$SCRIPT_DIR/visualizer"
-    npm install
-    cd "$SCRIPT_DIR"
+# Check if requirements.txt has changed
+CURRENT_REQ_HASH=$(shasum "$SCRIPT_DIR/requirements.txt" | awk '{print $1}')
+if [ -f "$PY_HASH_FILE" ] && [ "$(cat "$PY_HASH_FILE")" == "$CURRENT_REQ_HASH" ]; then
+    echo -e "  [${GREEN}✓${NC}] Python dependencies up to date (cached)."
 else
-    echo "Warning: visualizer directory not found. Skipping npm install."
+    echo -e "  [${CYAN}⚙${NC}] Installing/Updating Python packages..."
+    "$PIP_PATH" install -q -r "$SCRIPT_DIR/requirements.txt"
+    echo "$CURRENT_REQ_HASH" > "$PY_HASH_FILE"
+fi
+
+# --- NPM Dependencies with Hash Caching ---
+if [ -d "$SCRIPT_DIR/visualizer" ]; then
+    NPM_HASH_FILE="$SCRIPT_DIR/visualizer/node_modules/.pkg_hash"
+    CURRENT_NPM_HASH=$(shasum "$SCRIPT_DIR/visualizer/package.json" | awk '{print $1}')
+
+    if [ -f "$NPM_HASH_FILE" ] && [ "$(cat "$NPM_HASH_FILE")" == "$CURRENT_NPM_HASH" ]; then
+        echo -e "  [${GREEN}✓${NC}] Visualizer NPM dependencies up to date (cached)."
+    else
+        echo -e "  [${CYAN}⚙${NC}] Installing/Updating Latent Space Explorer dependencies (npm)..."
+        cd "$SCRIPT_DIR/visualizer"
+        npm install --silent
+        echo "$CURRENT_NPM_HASH" > "node_modules/.pkg_hash"
+        cd "$SCRIPT_DIR"
+    fi
+else
+    echo -e "  [${YELLOW}!${NC}] Warning: visualizer directory not found. Skipping npm install."
 fi
 
 # Setup centralized logging
 LOGS_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOGS_DIR"
+
+echo -e "\n${BOLD}${CYAN}Configuring macOS launchd Background Services...${NC}"
 
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 mkdir -p "$LAUNCH_AGENTS_DIR"
@@ -110,7 +151,7 @@ mkdir -p "$LAUNCH_AGENTS_DIR"
 DAEMON_PLIST_PATH="$LAUNCH_AGENTS_DIR/com.user.daemon.md.plist"
 LINTER_PLIST_PATH="$LAUNCH_AGENTS_DIR/com.user.daemon.linter.plist"
 
-echo "Generating com.user.daemon.md.plist..."
+echo -e "  [${CYAN}⚙${NC}] Generating com.user.daemon.md.plist..."
 cat << EOF > "$DAEMON_PLIST_PATH"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -142,7 +183,7 @@ cat << EOF > "$DAEMON_PLIST_PATH"
 </plist>
 EOF
 
-echo "Generating com.user.daemon.linter.plist..."
+echo -e "  [${CYAN}⚙${NC}] Generating com.user.daemon.linter.plist..."
 cat << EOF > "$LINTER_PLIST_PATH"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -179,12 +220,20 @@ cat << EOF > "$LINTER_PLIST_PATH"
 </plist>
 EOF
 
-echo "Loading plists into launchd..."
+echo -e "  [${CYAN}⚙${NC}] Loading plists into launchd..."
 launchctl unload "$DAEMON_PLIST_PATH" 2>/dev/null || true
 launchctl unload "$LINTER_PLIST_PATH" 2>/dev/null || true
 
 launchctl load "$DAEMON_PLIST_PATH"
 launchctl load "$LINTER_PLIST_PATH"
 
-echo "Installation complete! Daemon.md is now running in the background."
-echo "Logs can be found in the logs/ directory."
+echo -e "  [${GREEN}✓${NC}] Services successfully loaded."
+
+echo -e "\n${BOLD}${GREEN}================================================${NC}"
+echo -e "${BOLD}${GREEN}🚀 Installation complete! Daemon.md is running. 🚀${NC}"
+echo -e "${BOLD}${GREEN}================================================${NC}"
+echo -e "\n${BOLD}Next Steps:${NC}"
+echo -e "  1. Drop a markdown note into: ${CYAN}$VAULT_ABS_PATH/raw/${NC}"
+echo -e "  2. Run ${YELLOW}./status.sh${NC} to view your live token usage dashboard."
+echo -e "  3. Run ${YELLOW}./start_visualizer.sh${NC} to see your 3D Latent Space."
+echo -e "\nLogs are routed to the ${CYAN}logs/${NC} directory.\n"
