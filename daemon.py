@@ -47,6 +47,9 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # Configurable models (default to 3.1 flash-lite if not provided)
 MODEL_NAME = os.getenv("GEMINI_MODEL_DAEMON", "gemini-3.1-flash-lite-preview")
 
+# Configurable polling interval (default to 15 seconds)
+POLL_INTERVAL = int(os.getenv("DAEMON_POLL_INTERVAL", "15"))
+
 # Configure Robust Rotating Logging
 LOG_DIR = SCRIPT_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -283,7 +286,7 @@ def periodic_scan():
             safe_process_raw_file(file)
 
 def main():
-    logging.info(f"Starting Daemon.md watching {RAW_DIR}")
+    logging.info(f"Starting Daemon.md watching {RAW_DIR} with {POLL_INTERVAL}s polling fallback")
 
     event_handler = RawFolderHandler()
     observer = Observer()
@@ -295,8 +298,7 @@ def main():
 
     try:
         while True:
-            # Lazy sweep every 60 seconds as a highly efficient fallback to watchdog
-            time.sleep(60)
+            time.sleep(POLL_INTERVAL)
             periodic_scan()
     except KeyboardInterrupt:
         observer.stop()
