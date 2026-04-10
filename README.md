@@ -1,80 +1,97 @@
 # Daemon.md
 
-**Daemon.md** is a fully autonomous, self-seeding knowledge graph engine that lives entirely inside an Obsidian markdown vault on macOS.
+Daemon.md is a fully autonomous, self-seeding knowledge graph engine that lives entirely inside an Obsidian markdown vault on macOS.
 
-Instead of traditional Retrieval-Augmented Generation (RAG) which searches for context *at query time*, Daemon.md uses **"Eager Compilation"**. When you drop a raw note into the inbox, a background daemon instantly uses Google's Gemini models to extract entities, map concepts, and autonomously write interconnected markdown files into your vault.
+Instead of relying on traditional Retrieval-Augmented Generation (RAG), which searches for context at query time, Daemon.md utilizes an architecture called **Eager Compilation**. When a raw note is dropped into the inbox, a background daemon instantly leverages Google's Gemini models to extract entities, map concepts, and autonomously write interconnected markdown files directly into the vault.
 
-It includes a native 3D visualizer to explore your semantic graph in real-time.
+The project also includes a local 3D visualizer to explore the semantic graph in real-time.
 
 ---
 
-## Features
+## Core Capabilities
 
-- 🧠 **Eager Compilation:** Drops unstructured `.md` files into the `raw/` inbox. They are instantly processed, categorized, and rewritten into your permanent wiki.
-- ⚡️ **Gemini Powered:** Fully configurable AI backend. Defaults to `gemini-3.1-flash-lite-preview` for lightning-fast routing and JSON extraction, and `gemini-3.1-pro-preview` for deep weekly synthesis.
-- 👻 **Ghost Nodes:** Aggressively uses `[[Wikilinks]]` to connect concepts. If a concept is linked but doesn't exist yet, it appears as a "Ghost Node" in your visualizer, showing the frontiers of your knowledge.
-- 🌌 **Latent Space Explorer:** A local Vite/React web application rendering a 3D semantic map of your vault.
-- 💻 **Frictionless macOS Integration:** Uses native macOS `launchd` for continuous background processing and `osascript` for native push notifications upon updates.
+- **Eager Compilation:** Unstructured `.md` files dropped into the `raw/` inbox are instantly processed, categorized, and rewritten into the permanent knowledge base.
+- **Configurable AI Backend:** Powered by the new `google-genai` SDK. Defaults to `gemini-3.1-flash-lite-preview` for low-latency routing and JSON extraction, and `gemini-3.1-pro-preview` for deep weekly synthesis. Models are fully configurable via environment variables.
+- **Ghost Nodes:** The engine aggressively uses `[[Wikilinks]]` to connect concepts. If a concept is linked but does not exist in the file system yet, it is tracked as a "Ghost Node," highlighting frontiers of missing knowledge.
+- **Latent Space Explorer:** A local Vite and React web application that renders a 3D semantic map of the knowledge graph.
+- **Frictionless macOS Integration:** Utilizes native macOS `launchd` for highly reliable, zero-terminal continuous background processing, and `osascript` for native push notifications upon successful ingestion.
+- **Resilient Operations:** Features thread-safe duplicate processing prevention, graceful API circuit breakers (moving unparseable files to a `failed/` directory instead of infinite retries), robust rotating logs, and automatic redaction of API keys from all output streams.
+
+---
 
 ## Prerequisites
 
-- **macOS** (This project utilizes macOS native tools like `launchctl` and `osascript`).
-- **Python 3** installed and available in your PATH.
-- **Node.js & npm** installed (for the 3D visualizer).
-- A **Google Gemini API Key**.
+- **macOS:** Required due to reliance on native tools (`launchctl` and `osascript`).
+- **Python 3:** Installed and available in your PATH.
+- **Node.js & npm:** Required for the 3D visualizer frontend.
+- **Google Gemini API Key:** Obtainable via Google AI Studio.
 
 ---
 
-## Installation
+## Architecture and Installation
+
+It is critical that the Daemon.md codebase and the Obsidian Vault data remain separated. The scripts should be cloned to a standard directory (e.g., `~/Daemon_Engine`), while the Vault should be hosted in your preferred location (e.g., iCloud Drive).
+
+### Setup
 
 1. **Clone the repository:**
-   Keep this project directory *outside* of your Obsidian Vault (e.g., in `~/Daemon_Engine`). The logic and data should remain separated.
    ```bash
    git clone https://github.com/yourusername/daemon-md.git
    cd daemon-md
    ```
 
 2. **Configure Environment:**
-   Copy the example config and edit it to include your Gemini API key and the absolute path to where you want your Vault to live (e.g., in iCloud).
+   Copy the example config and edit it to include your API key and the absolute path to your Vault.
    ```bash
    cp .env.example .env
    nano .env
    ```
-   *Note: Ensure your `VAULT_PATH` is wrapped in quotes if it contains spaces (like iCloud drive paths).*
+   *Note: Ensure your `VAULT_PATH` is wrapped in quotes if it contains spaces.* The Python backend will automatically handle scrubbing terminal escape characters (like `\ `) common to macOS iCloud paths.
 
 3. **Run the Installer:**
-   The `install.sh` script is a zero-terminal setup. It will:
-   - Scaffold the folder structure in your Vault.
-   - Generate the master `GEMINI.md` system prompt.
-   - Set up a Python virtual environment and install dependencies.
-   - Run `npm install` for the 3D Visualizer.
-   - Create and load macOS `launchd` plists to run the engine in the background.
    ```bash
    ./install.sh
    ```
+   The `install.sh` script is a zero-terminal setup utility. It performs the following operations:
+   - Scaffolds the strict directory structure in the Vault.
+   - Generates the master `GEMINI.md` system prompt.
+   - Sets up a localized Python virtual environment (`venv`) and installs dependencies.
+   - Executes `npm install` for the visualizer.
+   - Creates and registers macOS `launchd` `.plist` agents to start the background engine.
 
 ---
 
-## Usage
+## Application Components
 
 ### 1. The Ingestion Engine (`daemon.py`)
-Once installed, the daemon runs continuously in the background.
-Simply drop any new text, brain dump, or meeting note into the `raw/` folder in your Vault as an `.md` file.
+Once installed, the daemon runs continuously as a background process. It utilizes `watchdog` to monitor the `raw/` directory for filesystem creation and modification events. To ensure reliability against silent iCloud synchronization drops, it also performs a lazy polling sweep every 60 seconds.
 
-Within seconds, you will receive a macOS push notification detailing the concepts, entities, or action items that were updated. The raw file will be deleted, and your permanent wiki will be updated.
+**Workflow:**
+- Drop any unstructured text or meeting note into the `raw/` folder as an `.md` file.
+- The daemon reads the note, provides the rest of the vault to Gemini for context, and requests a JSON array of `wiki_updates` or `task_completions`.
+- Target files are completely rewritten to weave the new context seamlessly into the old, maintaining Markdown hygiene.
+- The raw file is deleted.
+- A macOS push notification is fired detailing the updated entities or concepts.
 
 ### 2. The Synthesis Linter (`lint_wiki.py`)
-A weekly cron job automatically runs every Sunday at 3:00 AM. It reads your entire knowledge graph, uses `gemini-3.1-pro` to audit for contradictions, orphaned nodes, and synthesis opportunities, and generates a `Maintenance_Report.md` at the root of your vault.
+A scheduled cron job running automatically every Sunday at 3:00 AM.
+It compiles the entire knowledge graph into a single secure XML payload and instructs a reasoning model (defaulting to `3.1-pro`) to audit the vault. It generates a `Maintenance_Report.md` at the root of the vault detailing:
+- Logical contradictions.
+- Orphaned nodes.
+- Unseen synthesis opportunities.
+- A checklist of actionable recommendations for the week.
 
-### 3. The Latent Space Explorer
-To visualize your brain in 3D:
+### 3. The Latent Space Explorer (`start_visualizer.sh`)
+The `graph_builder.py` script automatically runs after every daemon ingestion and linter execution, generating an updated `latent_space.json` map of the vault.
+
+To view the graph in 3D, run:
 ```bash
 ./start_visualizer.sh
 ```
-This spins up a local Vite dev server. Open `http://localhost:5173` to explore.
-- 🔵 **Cyan:** Entities (People, Companies, Hardware)
-- 🟣 **Magenta:** Concepts (Frameworks, Theories, Projects)
-- ⚪️ **Grey:** Ghost Nodes (Unresolved Wikilinks)
+This spins up a local Vite dev server. Open `http://localhost:5173` in a web browser.
+- **Cyan Nodes:** Entities (People, Companies, Hardware)
+- **Magenta Nodes:** Concepts (Frameworks, Theories, Projects)
+- **Grey Nodes:** Ghost Nodes (Unresolved Wikilinks)
 
 ---
 
@@ -86,7 +103,7 @@ The script automatically generates this structure at your designated `VAULT_PATH
 /Your_Vault/
   ├── GEMINI.md (The master system prompt)
   ├── raw/ (The inbox where new notes are dropped)
-  ├── failed/ (Where unparseable raw notes are moved)
+  ├── failed/ (Circuit breaker output for unparseable raw notes)
   ├── wiki/
   │   ├── entities/
   │   └── concepts/
@@ -94,26 +111,26 @@ The script automatically generates this structure at your designated `VAULT_PATH
   └── Maintenance_Report.md (Generated weekly)
 ```
 
-## Customizing the AI
+### Customizing the AI Behavior
+The autonomous extraction behavior is controlled by the `GEMINI.md` file located at the root of the vault. This file is heavily optimized for Gemini 3.1 reasoning models, enforcing Chain-of-Thought processing before markdown generation. You may edit this file to give the daemon new instructions or alter its categorization rules.
 
-The behavior of the autonomous extraction is controlled entirely by the `GEMINI.md` file located at the root of your vault. You can edit this file at any time to give the daemon new instructions, change how it categorizes data, or update its markdown formatting rules.
+---
 
-## Troubleshooting
+## Lifecycle Management and Troubleshooting
 
-- **Logs:** If the background daemon isn't working, check the `logs/` directory. It contains detailed Python application logs (`daemon.log`, `linter.log`) as well as `launchd` service logs.
-- **Failed Ingestion:** If a note dropped in `raw/` fails to process due to a parsing error or API limit, it will be moved to the `failed/` directory in your Vault. You can edit the file to fix any obvious issues and move it back to `raw/` to retry.
-- **Cost & Token Tracking:** Every time the Daemon or Linter runs, it records the exact number of Gemini API tokens consumed. You can monitor this by reading `logs/cost_tracker.jsonl`.
-- **Updating Daemon.md:** To pull the latest code and restart the background services, simply run:
-  ```bash
-  ./update.sh
-  ```
-- **Uninstalling:** To remove the background services from your system (this does not delete your Vault or the code):
-  ```bash
-  ./uninstall.sh
-  ```
-- **Restarting the Daemon:** If you need to restart the background processes manually, run `./install.sh` again, or use:
+### Scripts
+- **Updating:** Run `./update.sh` to pull the latest code from Git, update dependencies, and gracefully restart the background services.
+- **Uninstalling:** Run `./uninstall.sh` to unload the `launchd` background services from the system. This will *not* delete the codebase or the Vault data.
+- **Manual Restart:** To manually reload the daemon without pulling code:
   ```bash
   launchctl unload ~/Library/LaunchAgents/com.user.daemon.md.plist
   launchctl load ~/Library/LaunchAgents/com.user.daemon.md.plist
   ```
-- **Virtual Environment:** The system uses a local virtual environment located at `./venv`. If Python dependencies fail, try deleting the `./venv` folder and re-running `./install.sh`.
+
+### Logs and Metrics
+- **Application Logs:** All Python application logs (`daemon.log` and `linter.log`) and standard output from `launchd` are centralized in the `logs/` directory. They utilize a `RotatingFileHandler` (capped at 5MB) to ensure stable disk usage.
+- **Security:** API keys are automatically redacted from all log streams.
+- **Cost Tracking:** The engine records the exact number of Gemini API tokens consumed during every execution. This data is appended to `logs/cost_tracker.jsonl` for observability.
+
+### Ingestion Failures
+If a note dropped into `raw/` fails to process—whether due to an API quota limit, network failure, or an unparseable JSON hallucination—the daemon will catch the exception and move the file into the `failed/` directory. This prevents the periodic scanner from infinitely retrying the broken file and draining API credits. You can inspect the file and move it back into `raw/` to retry.
