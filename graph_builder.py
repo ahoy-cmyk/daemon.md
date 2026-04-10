@@ -31,14 +31,18 @@ def build_graph():
     links = []
 
     existing_files = set()
+    file_contents = {}
 
-    # First pass: Identify all existing files
+    # Regex to find [[Wikilinks]] or [[Wikilink|Alias]]
+    wikilink_pattern = re.compile(r"\[\[(.*?)\]\]")
+
+    # Single pass: Identify files, map them, and read contents
     for root, _, files in os.walk(wiki_dir):
         for file in files:
             if file.endswith(".md"):
-                # Use filename without extension as ID for easy matching with wikilinks
                 file_id = file[:-3]
                 existing_files.add(file_id)
+                file_path = Path(root) / file
 
                 # Determine group based on parent directory
                 parent_dir = Path(root).name
@@ -49,43 +53,35 @@ def build_graph():
                     "group": group
                 })
 
-    # Regex to find [[Wikilinks]] or [[Wikilink|Alias]]
-    wikilink_pattern = re.compile(r"\[\[(.*?)\]\]")
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        file_contents[file_id] = f.read()
+                except Exception as e:
+                    logging.error(f"Error reading file for graph generation: {file_path}. Error: {e}")
+                    file_contents[file_id] = ""
 
     ghost_nodes = set()
 
-    # Second pass: Extract links
-    for root, _, files in os.walk(wiki_dir):
-        for file in files:
-            if file.endswith(".md"):
-                source_id = file[:-3]
-                file_path = Path(root) / file
+    # Process links from the memory-cached contents
+    for source_id, content in file_contents.items():
+        matches = wikilink_pattern.findall(content)
+        for match in matches:
+            # Handle aliases: [[Target|Display]] -> Target
+            target = match.split("|")[0].strip()
 
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        content = f.read()
+            # Add link
+            links.append({
+                "source": source_id,
+                "target": target
+            })
 
-                    matches = wikilink_pattern.findall(content)
-                    for match in matches:
-                        # Handle aliases: [[Target|Display]] -> Target
-                        target = match.split("|")[0].strip()
-
-                        # Add link
-                        links.append({
-                            "source": source_id,
-                            "target": target
-                        })
-
-                        # Create ghost node if target doesn't exist and we haven't added it yet
-                        if target not in existing_files and target not in ghost_nodes:
-                            ghost_nodes.add(target)
-                            nodes.append({
-                                "id": target,
-                                "group": "ghost"
-                            })
-
-                except Exception as e:
-                    logging.error(f"Error reading file for graph generation: {file_path}. Error: {e}")
+            # Create ghost node if target doesn't exist and we haven't added it yet
+            if target not in existing_files and target not in ghost_nodes:
+                ghost_nodes.add(target)
+                nodes.append({
+                    "id": target,
+                    "group": "ghost"
+                })
 
     graph_data = {
         "nodes": nodes,

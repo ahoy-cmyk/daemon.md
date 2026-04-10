@@ -7,6 +7,7 @@ import subprocess
 import shutil
 import threading
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from google import genai
@@ -85,11 +86,13 @@ logging.basicConfig(
 
 def send_notification(title, message):
     """Sends a native macOS push notification safely."""
-    # Prevent AppleScript injection by fully escaping both backslashes and double quotes
-    escaped_title = title.replace('\\', '\\\\').replace('"', '\\"')
-    escaped_message = message.replace('\\', '\\\\').replace('"', '\\"')
-    apple_script = f'display notification "{escaped_message}" with title "{escaped_title}"'
-    subprocess.run(["osascript", "-e", apple_script])
+    subprocess.run([
+        "osascript",
+        "-e", "on run argv",
+        "-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+        "-e", "end run",
+        title, message
+    ])
 
 def get_graph_context():
     """Reads latent_space.json to provide structural context instead of raw file reads."""
@@ -187,7 +190,12 @@ NEW RAW CONTENT TO INGEST:
                 logging.warning(f"Incomplete update object: {update}")
                 continue
 
-            target_path = VAULT_DIR / rel_path
+            target_path = (VAULT_DIR / rel_path).resolve()
+
+            # Prevent Directory Traversal
+            if not target_path.is_relative_to(VAULT_DIR):
+                logging.error(f"Path traversal blocked: Attempted to write to {target_path}")
+                continue
 
             # Ensure the directory exists
             target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -244,25 +252,29 @@ def safe_process_raw_file(file_path):
             if path_str in processing_files:
                 processing_files.remove(path_str)
 
+# Global ThreadPoolExecutor for background processing
+executor = ThreadPoolExecutor(max_workers=4)
+
+def handle_file_async(file_path):
+    """Wait briefly, then process the file. This runs in a worker thread."""
+    time.sleep(1)
+    safe_process_raw_file(file_path)
+
 class RawFolderHandler(FileSystemEventHandler):
     def on_created(self, event):
         if not event.is_directory and event.src_path.endswith('.md'):
-            # Small delay to ensure file is completely written before reading
-            time.sleep(1)
-            safe_process_raw_file(event.src_path)
+            executor.submit(handle_file_async, event.src_path)
 
     def on_moved(self, event):
         # Catch files moved/renamed into the directory
         if not event.is_directory and event.dest_path.endswith('.md'):
             if Path(event.dest_path).parent == RAW_DIR:
-                time.sleep(1)
-                safe_process_raw_file(event.dest_path)
+                executor.submit(handle_file_async, event.dest_path)
 
     def on_modified(self, event):
         # Catch files synced via iCloud that may bypass creation events
         if not event.is_directory and event.src_path.endswith('.md'):
-            time.sleep(1)
-            safe_process_raw_file(event.src_path)
+            executor.submit(handle_file_async, event.src_path)
 
 def periodic_scan():
     """Fallback scanner to catch files if filesystem events fail (common on iCloud)."""
