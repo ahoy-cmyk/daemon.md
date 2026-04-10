@@ -13,9 +13,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 LOGS_DIR="$SCRIPT_DIR/logs"
 TRACKER_FILE="$LOGS_DIR/cost_tracker.jsonl"
 
-echo -e "\n${BOLD}${PURPLE}========================================${NC}"
-echo -e "${BOLD}${PURPLE}          DAEMON.MD // STATUS           ${NC}"
-echo -e "${BOLD}${PURPLE}========================================${NC}\n"
+echo -e "\n${BOLD}${CYAN}========================================${NC}"
+echo -e "${BOLD}${CYAN}          DAEMON.MD | SYSTEM STATUS     ${NC}"
+echo -e "${BOLD}${CYAN}========================================${NC}\n"
 
 # --- Service Health ---
 echo -e "${BOLD}${CYAN}► Background Services:${NC}"
@@ -91,4 +91,4 @@ else
 fi
 echo ""
 
-echo -e "${BOLD}${PURPLE}========================================${NC}\n"
+echo -e "${BOLD}${CYAN}========================================${NC}\n"

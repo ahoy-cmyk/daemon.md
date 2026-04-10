@@ -1,117 +1,112 @@
-# Daemon.md: The Eager Compilation Knowledge Engine
+# Daemon.md: Event-Driven Knowledge Compilation
 
-Daemon.md is an enterprise-grade, fully autonomous, self-seeding knowledge graph engine that lives entirely inside your local Obsidian markdown vault on macOS.
+Daemon.md is an autonomous background engine designed to natively structure markdown notes inside a local Obsidian vault on macOS.
 
-Traditional AI workflows rely on **Retrieval-Augmented Generation (RAG)**—where a massive, unstructured database is searched only at the exact moment you ask a query. RAG is passive; it requires you to know what you are looking for, and its accuracy is bound by the quality of its vector search.
+Daemon.md replaces the reactive Retrieval-Augmented Generation (RAG) model with a proactive architecture known as **Eager Compilation**. Instead of relying on vector search at query time, the engine relies on immediate, deterministic transformation at ingestion time.
 
-Daemon.md introduces a fundamentally different architecture: **Eager Compilation**.
-When you drop a raw, messy note into the inbox, a background macOS daemon instantly activates. It leverages the latest reasoning models (Google Gemini 3.1 via the `google-genai` SDK) to structurally extract entities, map concepts, and autonomously write pristine, interconnected markdown files directly into your permanent vault. Knowledge is synthesized, linked, and organized *the moment it is ingested*.
-
-Your vault is no longer a graveyard of unread notes. It is a living, breathing semantic engine.
+When a raw `.md` file enters the inbox, a background `launchd` process leverages Google's Gemini API to analyze the text, map concepts to a local structural JSON representation, and autonomously write interconnected markdown files directly into the user's permanent file hierarchy.
 
 ---
 
-## I. Architectural Philosophy & Core Capabilities
+## I. Core Architecture
 
-Daemon.md is built strictly around the separation of logic and data. The execution engine (Python scripts, bash utilities, Node.js visualizer) sits entirely outside of your markdown vault, acting upon it via absolute paths.
+The Daemon.md system maintains a strict separation of logic and data. The execution engine (Python backend, Bash lifecycle utilities, Node.js visualizer) operates outside the vault boundaries, targeting the local directory via absolute paths to prevent repository pollution.
 
-### 1. Eager Ingestion (The Daemon)
-A highly optimized Python background process (`daemon.py`) monitors a designated `raw/` inbox directory. It uses `watchdog` to catch filesystem creation events, augmented by an `on_modified` handler to capture silent iCloud drive synchronizations (e.g., notes typed on your iPhone). A battery-friendly 60-second lazy sweep acts as a final fail-safe.
+### 1. The Ingestion Engine (`daemon.py`)
+A continuous Python process monitoring the `raw/` inbox directory. It uses the `watchdog` library to capture filesystem `on_created` events, supplemented by an `on_modified` handler to capture silent remote synchronizations (e.g., iCloud Drive). A 60-second polling sweep ensures eventual consistency if `FSEvents` are dropped by the OS.
 
-When a note is detected:
-1. The daemon reads the note and fetches the current 3D structural map of your vault (`latent_space.json`).
-2. It sends this context to `gemini-3.1-flash-lite-preview`.
-3. The LLM utilizes native JSON-mode to output highly structured instructions, classifying the knowledge as an Entity, a Concept, or an Action Item.
-4. Target markdown files in your vault are **completely rewritten** to weave the new context seamlessly into the old, preventing the fragmentation of appended text.
-5. A native macOS push notification is fired, and the raw note is deleted.
+**Workflow:**
+1. A raw note is detected and locked via `threading.Lock()` to prevent race conditions.
+2. The daemon loads `latent_space.json`, providing the LLM with the complete structural topology of the vault without the token overhead of reading raw file contents.
+3. The context is routed to `gemini-3.1-flash-lite-preview`. The model natively outputs a structured JSON array, routing the analyzed data into three categories: Entities, Concepts, or Action Items.
+4. Target markdown files are completely rewritten to integrate the new context, avoiding fragmented append operations.
+5. The raw note is deleted, and a native macOS push notification is dispatched via `osascript`.
 
-### 2. The Latent Space Explorer (Ghost Nodes)
-Eager Compilation relies heavily on Obsidian-style `[[Wikilinks]]`. The engine is strictly instructed to link concepts even if they do not exist yet.
+### 2. The Synthesis Linter (`lint_wiki.py`)
+A `launchd` scheduled task (cron) executing every Sunday at 3:00 AM.
+The script recursively packages the entire knowledge graph into a secure XML `<vault_content>` payload and routes it to `gemini-3.1-pro-preview`. The reasoning model audits the graph structure and writes a `Maintenance_Report.md` to the vault root containing:
+- Logical contradictions detected across files.
+- Orphaned nodes requiring integration.
+- Structural synthesis opportunities.
 
-After every ingestion, the `graph_builder.py` script traverses the vault and generates a structural JSON map. If an entity is referenced but has no markdown file, it is instantiated as a **Ghost Node**.
+### 3. The Latent Space Explorer (`start_visualizer.sh`)
+Eager Compilation relies heavily on Obsidian-style `[[Wikilinks]]`. If the LLM generates a wikilink for a concept that does not currently possess a corresponding `.md` file, the engine classifies it as an unresolved **Ghost Node**.
 
-By running `./start_visualizer.sh`, you spin up a local Vite/React web application leveraging Three.js (`react-force-graph-3d`) to explore this map. You can visually identify Ghost Nodes (rendered in dim grey), instantly highlighting the frontiers of your missing knowledge.
-
-### 3. The Synthesis Linter (Cron Job)
-A weekly scheduled macOS `launchd` task runs every Sunday at 3:00 AM. `lint_wiki.py` recursively packages your entire knowledge graph into a secure XML payload and submits it to `gemini-3.1-pro-preview`. The model audits the graph to generate a `Maintenance_Report.md` detailing logical contradictions, orphaned nodes, synthesis opportunities, and a checklist of actionable improvements for the week.
+Following every ingestion or lint cycle, `graph_builder.py` parses the vault and generates a deterministic `latent_space.json` map. Running the Vite/React visualizer (`react-force-graph-3d`) renders this topology in a 3D interface, explicitly highlighting Ghost Nodes to identify missing knowledge frontiers.
 
 ---
 
-## II. Security, Performance, and Resilience
+## II. Security, Resilience, and Performance
 
-This engine is designed to run indefinitely in the background without user intervention. It includes several enterprise-grade stability features:
+The application is engineered to run indefinitely as a local service, implementing several strict fault-tolerance and security mechanisms:
 
-- **Idempotent Caching:** The installation and update scripts (`install.sh`, `update.sh`) utilize SHA-1 hash caching for both `requirements.txt` and `package.json`. Dependencies are only installed if they have changed, making updates instantaneous.
-- **Context Window Optimization:** Rather than sending the entire multi-megabyte textual contents of your vault to the LLM on every minor note ingestion—which causes severe latency and burns massive API tokens—the daemon passes the lightweight `latent_space.json` map. The model understands the structure of your brain without reading every word.
-- **Thread Safety:** Watchdog events and periodic scanning loops are guarded by a `threading.Lock()` to prevent race conditions or duplicate API calls if a file is triggered twice simultaneously.
-- **API Circuit Breaker:** If a note fails to process due to a quota limit, network error, or a hallucinated JSON structure from the LLM, the file is immediately moved to a `failed/` directory. This prevents the daemon from infinitely retrying a broken file and draining your API budget.
-- **Log Redaction:** A custom `APIRedactingFormatter` sits inside the Python `logging` module. Every single log message and traceback is intercepted, and any instance of your `GEMINI_API_KEY` is scrubbed and replaced with `***REDACTED_API_KEY***`.
-- **Command Injection Prevention:** Terminal escape characters (like `\ `) common to macOS iCloud paths are scrubbed natively in Python. The installer uses strict parameter expansion (`${VAULT_PATH/#\~/$HOME}`) rather than `eval`, neutralizing arbitrary shell command execution. AppleScript push notifications are rigorously escaped.
+- **Idempotent Setup:** The `install.sh` and `update.sh` lifecycle scripts utilize SHA-1 hash caching against `requirements.txt` and `package.json`. Package managers are invoked strictly when dependencies change, optimizing execution time.
+- **Context Optimization:** By supplying the LLM with `latent_space.json` rather than recursively feeding the vault contents during ingestion, API token consumption and request latency are radically reduced.
+- **Circuit Breakers:** If note processing fails due to network disruption, API quota limits, or invalid JSON schemas from the LLM, the raw file is moved to a `failed/` directory. This mitigates infinite retry loops and prevents API credit exhaustion.
+- **Token Tracking:** The application extracts `usage_metadata` from every Google API response, appending `prompt_tokens` and `candidates_tokens` to `logs/cost_tracker.jsonl` for deterministic cost auditing.
+- **Log Redaction:** A custom `APIRedactingFormatter` intercepts all output within the Python `logging` module, automatically scrubbing the user's `GEMINI_API_KEY` from disk logs and standard output streams.
+- **Injection Defenses:** Terminal escape characters associated with macOS iCloud paths are stripped natively. Shell scripts utilize bash parameter expansion (`${VAULT_PATH/#\~/$HOME}`) rather than `eval` to neutralize command injection. AppleScript notifications rigorously escape shell variables.
 
 ---
 
 ## III. Setup and Installation
 
 ### Prerequisites
-- **macOS:** Required due to reliance on native tools (`launchctl` and `osascript`).
-- **Python 3:** Installed and available in your PATH.
-- **Node.js & npm:** Required for the 3D Latent Space visualizer.
+- **macOS:** Required for `launchctl` and `osascript` compatibility.
+- **Python 3:** Required in `PATH`.
+- **Node.js & npm:** Required for the Vite visualizer.
 - **Google Gemini API Key:** Obtainable via [Google AI Studio](https://aistudio.google.com/apikey).
 
-### Installation Instructions
+### Deployment
 
-1. **Clone the Engine:**
-   Keep the engine separated from your Vault (e.g., in `~/Daemon_Engine`).
+1. **Clone the Repository:**
+   Maintain the engine directory separately from the Obsidian Vault.
    ```bash
    git clone https://github.com/yourusername/daemon-md.git
    cd daemon-md
    ```
 
-2. **Configure the Environment:**
+2. **Configure Environment:**
    ```bash
    cp .env.example .env
    nano .env
    ```
-   Add your Gemini API key and the absolute path to your Obsidian vault. *Note: Ensure your `VAULT_PATH` is wrapped in quotes if it contains spaces.* The Python backend will automatically handle the resolution.
+   Provide the absolute path to your Obsidian vault. *Paths containing spaces must be wrapped in double quotes.*
 
-3. **Run the Installer:**
+3. **Initialize System:**
    ```bash
    ./install.sh
    ```
-   This script features a beautifully colorized UI. It tests macOS Full Disk Access write privileges, scaffolds the directory structure in your Vault, generates the `GEMINI.md` master prompt, creates a localized Python `venv`, runs `npm install`, and registers the background services with `launchctl`.
+   The installer validates macOS Full Disk Access permissions, scaffolds the target vault directory structure, generates the `GEMINI.md` system instruction file, instantiates a local Python `venv`, and registers the `launchd` property list (`.plist`) agents.
+
+4. **Connect to Obsidian:**
+   - Open the **Obsidian** app on your Mac.
+   - Select **"Open folder as vault"**.
+   - Navigate to your designated `VAULT_PATH` and click **Open**.
+   - You can now drag and drop raw notes directly into the `raw/` folder within the Obsidian interface to trigger the Daemon.
 
 ---
 
-## IV. Command Line Interface (CLI) Utilities
+## IV. Lifecycle Management (CLI)
 
-Daemon.md includes an ANSI-colorized suite of bash utilities for lifecycle management.
+The repository provides modular bash utilities for system administration.
 
-### 1. The Status Dashboard (`./status.sh`)
-Run this at any time to view a live, beautiful terminal dashboard. It parses `launchctl` to verify your background services are alive, instantly calculates your total API token consumption from the metrics tracker, and prints the most recent log events.
-
-### 2. The Updater (`./update.sh`)
-A safe, 1-click update mechanism. It checks for uncommitted changes, stashes them, pulls the latest code from Git, prints a mini-changelog of what is being updated, pops the stash, and runs the idempotent installer to silently reload your background services.
-
-### 3. The Visualizer (`./start_visualizer.sh`)
-Spins up the local Vite dev server. Open `http://localhost:5173` to explore your Latent Space graph in 3D.
-
-### 4. The Uninstaller (`./uninstall.sh`)
-Safely unloads and removes the `launchd` plist files from the macOS system layer. It does **not** delete your codebase or your Vault.
+- `./status.sh`: Parses `launchctl` to verify daemon health, aggregates total token consumption from `cost_tracker.jsonl`, and outputs the latest rolling logs to the terminal.
+- `./update.sh`: Manages safe Git pulls (stashing uncommitted state), outputs a revision changelog, and invokes the idempotent installer to refresh dependencies and reload `launchd` services.
+- `./start_visualizer.sh`: Initiates the local Vite server on `localhost:5173` to render the 3D topology.
+- `./uninstall.sh`: Unloads and destroys the system `launchd` `.plist` files. It does not modify or delete the local repository or the target Vault.
 
 ---
 
 ## V. Advanced Configuration
 
-### Customizing the AI Prompt
-The autonomous extraction behavior is controlled entirely by the `GEMINI.md` file located at the root of your vault. The scaffolded prompt is highly optimized for the Gemini 3.1 reasoning architecture, enforcing Chain-of-Thought processing before markdown generation. You may edit this file inside Obsidian at any time to give the daemon new instructions or alter its categorization rules.
+### Autonomous Extraction (GEMINI.md)
+The taxonomy and behavioral logic of the Daemon are controlled entirely by the `GEMINI.md` file located at the vault root. The default prompt is optimized for Gemini 3.1 architecture, instructing the model to utilize Chain-of-Thought processing prior to output generation. Modifying this file alters the Daemon's parsing and structural routing behavior dynamically.
 
-### Modifying the AI Models
-By default, the engine relies on the absolute newest Google AI models. You can override these defaults by editing your `.env` file:
+### Target Models
+The engine relies on the Google GenAI SDK. Default models are defined in `.env.example` and can be overridden:
 - `GEMINI_MODEL_DAEMON="gemini-3.1-flash-lite-preview"`
 - `GEMINI_MODEL_LINTER="gemini-3.1-pro-preview"`
 
-### Monitoring API Costs
-Every time the Daemon or Linter communicates with Google, it extracts the exact `prompt_tokens`, `candidates_tokens`, and `total_tokens` consumed. This data is structured as JSON Lines and appended to `logs/cost_tracker.jsonl`. You can read this file programmatically or view the aggregate usage via `./status.sh`.
-
-### Reviewing Application Logs
-All standard output and Python application logs (`daemon.log`, `linter.log`) are centralized in the `logs/` directory. They utilize a `RotatingFileHandler` capped at 5MB, ensuring stable long-term disk usage on your Mac.
+### Logging
+Output streams from both the Python application and the macOS `launchd` service are routed to the `logs/` directory. Files (`daemon.log`, `linter.log`) utilize a `RotatingFileHandler` constrained to 5MB, maintaining a deterministic disk footprint over long-term operation.
