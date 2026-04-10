@@ -95,7 +95,10 @@ WIKI CONTENTS:
         logging.info(f"Successfully generated Maintenance Report at {REPORT_PATH}")
 
         # Update graph JSON
-        graph_builder.build_graph()
+        try:
+            graph_builder.build_graph()
+        except Exception as ge:
+            logging.error(f"Failed to rebuild graph after linting: {ge}")
 
         send_notification("Daemon.md Linter", "Weekly Maintenance Report generated.")
 

@@ -155,7 +155,10 @@ NEW RAW CONTENT TO INGEST:
         logging.info(f"Deleted raw file: {file_path.name}")
 
         # Update graph JSON
-        graph_builder.build_graph()
+        try:
+            graph_builder.build_graph()
+        except Exception as ge:
+            logging.error(f"Failed to rebuild graph after ingestion: {ge}")
 
         if actions_taken:
             send_notification("Daemon.md Updated", ", ".join(actions_taken))
