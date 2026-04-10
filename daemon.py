@@ -42,23 +42,44 @@ FAILED_DIR.mkdir(parents=True, exist_ok=True)
 # Configure Gemini
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Use 3.0 flash as requested
-# Depending on SDK version, we can configure json response.
-MODEL_NAME = "gemini-3.0-flash"
+# Configurable models (default to 3.1 flash if not provided)
+MODEL_NAME = os.getenv("GEMINI_MODEL_DAEMON", "gemini-3.1-flash")
 
 # Configure Robust Rotating Logging
 LOG_DIR = SCRIPT_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+class APIRedactingFormatter(logging.Formatter):
+    """Custom formatter to ensure API keys are never leaked in logs."""
+    def __init__(self, fmt, datefmt, api_key):
+        super().__init__(fmt, datefmt)
+        self.api_key = api_key
+
+    def format(self, record):
+        original_msg = super().format(record)
+        if self.api_key and self.api_key in original_msg:
+            return original_msg.replace(self.api_key, "***REDACTED_API_KEY***")
+        return original_msg
+
 from logging.handlers import RotatingFileHandler
+
+log_formatter = APIRedactingFormatter(
+    '%(asctime)s - %(message)s',
+    '%Y-%m-%d %H:%M:%S',
+    GEMINI_API_KEY
+)
+
 log_handler = RotatingFileHandler(
     LOG_DIR / "daemon.log", maxBytes=5*1024*1024, backupCount=2
 )
+log_handler.setFormatter(log_formatter)
+
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(log_formatter)
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[log_handler, logging.StreamHandler(sys.stdout)]
+    handlers=[log_handler, stream_handler]
 )
 
 def send_notification(title, message):
