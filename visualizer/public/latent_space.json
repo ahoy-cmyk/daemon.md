@@ -1,0 +1,13 @@
+{
+  "nodes": [
+    {"id": "AI", "group": "concept"},
+    {"id": "Machine Learning", "group": "concept"},
+    {"id": "Gemini", "group": "entity"},
+    {"id": "AGI", "group": "ghost"}
+  ],
+  "links": [
+    {"source": "AI", "target": "Machine Learning"},
+    {"source": "AI", "target": "Gemini"},
+    {"source": "AI", "target": "AGI"}
+  ]
+}

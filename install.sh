@@ -126,6 +126,15 @@ PIP_PATH="$VENV_DIR/bin/pip"
 echo "Installing required Python packages..."
 "$PIP_PATH" install -r "$SCRIPT_DIR/requirements.txt"
 
+echo "Setting up Latent Space Explorer (Visualizer)..."
+if [ -d "$SCRIPT_DIR/visualizer" ]; then
+    cd "$SCRIPT_DIR/visualizer"
+    npm install
+    cd "$SCRIPT_DIR"
+else
+    echo "Warning: visualizer directory not found. Skipping npm install."
+fi
+
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 mkdir -p "$LAUNCH_AGENTS_DIR"
 

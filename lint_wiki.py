@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 import google.generativeai as genai
 from dotenv import load_dotenv
+import graph_builder
 
 # Load environment variables
 load_dotenv()
@@ -92,6 +93,10 @@ WIKI CONTENTS:
             f.write(response.text)
 
         logging.info(f"Successfully generated Maintenance Report at {REPORT_PATH}")
+
+        # Update graph JSON
+        graph_builder.build_graph()
+
         send_notification("Daemon.md Linter", "Weekly Maintenance Report generated.")
 
     except Exception as e:

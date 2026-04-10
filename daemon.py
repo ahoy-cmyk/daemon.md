@@ -9,6 +9,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import google.generativeai as genai
 from dotenv import load_dotenv
+import graph_builder
 
 # Load environment variables
 load_dotenv()
@@ -152,6 +153,9 @@ NEW RAW CONTENT TO INGEST:
         # Delete the raw file
         file_path.unlink()
         logging.info(f"Deleted raw file: {file_path.name}")
+
+        # Update graph JSON
+        graph_builder.build_graph()
 
         if actions_taken:
             send_notification("Daemon.md Updated", ", ".join(actions_taken))
