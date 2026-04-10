@@ -256,6 +256,12 @@ class RawFolderHandler(FileSystemEventHandler):
                 time.sleep(1)
                 safe_process_raw_file(event.dest_path)
 
+    def on_modified(self, event):
+        # Catch files synced via iCloud that may bypass creation events
+        if not event.is_directory and event.src_path.endswith('.md'):
+            time.sleep(1)
+            safe_process_raw_file(event.src_path)
+
 def periodic_scan():
     """Fallback scanner to catch files if filesystem events fail (common on iCloud)."""
     for file in RAW_DIR.glob("*.md"):
@@ -275,8 +281,8 @@ def main():
 
     try:
         while True:
-            # Poll every 5 seconds as a fallback to watchdog
-            time.sleep(5)
+            # Lazy sweep every 60 seconds as a highly efficient fallback to watchdog
+            time.sleep(60)
             periodic_scan()
     except KeyboardInterrupt:
         observer.stop()
