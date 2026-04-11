@@ -1,113 +1,95 @@
-# Daemon.md: Event-Driven Knowledge Compilation
+# Daemon.md
 
-Daemon.md is an autonomous background engine designed to natively structure markdown notes inside a local Obsidian vault on macOS.
+Daemon.md is a background service that automatically turns your raw notes, thoughts, and voice memos into a structured, interconnected Obsidian wiki.
 
-Daemon.md replaces the reactive Retrieval-Augmented Generation (RAG) model with a proactive architecture known as **Eager Compilation**. Instead of relying on vector search at query time, the engine relies on immediate, deterministic transformation at ingestion time.
+Inspired by Andrej Karpathy's [LLM Wiki concept](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f), this project moves away from standard RAG (Retrieval-Augmented Generation) databases. Instead, it reads your input, extracts the core concepts, and formally writes actual markdown (`.md`) files directly into your local folder, maintaining a web of `[[Wikilinks]]` for you.
 
-When a raw `.md` file enters the inbox, a background `launchd` process leverages Google's Gemini API to analyze the text, map concepts to a local structural JSON representation, and autonomously write interconnected markdown files directly into the user's permanent file hierarchy.
+You drop a voice memo into a folder, and seconds later, your notes are updated, cross-referenced, and organized.
 
----
-
-## I. Core Architecture
-
-The Daemon.md system maintains a strict separation of logic and data. The execution engine (Python backend, Bash lifecycle utilities, Node.js visualizer) operates outside the vault boundaries, targeting the local directory via absolute paths to prevent repository pollution.
-
-### 1. The Ingestion Engine (`daemon.py`)
-A continuous Python process monitoring the `raw/` inbox directory. It uses the `watchdog` library to capture filesystem `on_created` events, supplemented by an `on_modified` handler to capture silent remote synchronizations (e.g., iCloud Drive). A 60-second polling sweep ensures eventual consistency if `FSEvents` are dropped by the OS.
-
-**Workflow:**
-1. A raw file (`.md`, `.txt`, or audio like `.m4a`, `.mp3`) is detected and locked via `threading.Lock()` to prevent race conditions.
-2. If the file is an audio recording (e.g., an iPhone Voice Memo), it is securely uploaded to the Gemini API for native transcription and analysis.
-3. The daemon loads `latent_space.json`, providing the LLM with the complete structural topology of the vault.
-4. The context is routed to the configured Gemini model (default: `gemini-3.1-flash-lite-preview`). The model natively outputs a structured JSON array, mapping the transcribed audio or text into interconnected markdown concepts and action items.
-5. Target markdown files are updated or generated, and the raw source file (and remote API upload) is securely deleted.
-6. A native macOS push notification is dispatched to confirm completion.
-
-### 2. The Synthesis Linter (`lint_wiki.py`)
-A `launchd` scheduled task (cron) executing every Sunday at 3:00 AM.
-The script recursively packages the entire knowledge graph into a secure XML `<vault_content>` payload and routes it to `gemini-3.1-pro-preview`. The reasoning model audits the graph structure and writes a `Maintenance_Report.md` to the vault root containing:
-- Logical contradictions detected across files.
-- Orphaned nodes requiring integration.
-- Structural synthesis opportunities.
-
-### 3. The Latent Space Explorer (`start_visualizer.sh`)
-Eager Compilation relies heavily on Obsidian-style `[[Wikilinks]]`. If the LLM generates a wikilink for a concept that does not currently possess a corresponding `.md` file, the engine classifies it as an unresolved **Ghost Node**.
-
-Following every ingestion or lint cycle, `graph_builder.py` parses the vault and generates a deterministic `latent_space.json` map. Running the Vite/React visualizer (`react-force-graph-3d`) renders this topology in a 3D interface, explicitly highlighting Ghost Nodes to identify missing knowledge frontiers.
+*(If you are a developer looking for the technical deep-dive into how the daemon, archiving, and feedback loops work, please read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).)*
 
 ---
 
-## II. Security, Resilience, and Performance
-
-The application is engineered to run indefinitely as a local service, implementing several strict fault-tolerance and security mechanisms:
-
-- **Idempotent Setup:** The `install.sh` and `update.sh` lifecycle scripts utilize SHA-1 hash caching against `requirements.txt` and `package.json`. Package managers are invoked strictly when dependencies change, optimizing execution time.
-- **Context Optimization:** By supplying the LLM with `latent_space.json` rather than recursively feeding the vault contents during ingestion, API token consumption and request latency are radically reduced.
-- **Circuit Breakers:** If note processing fails due to network disruption, API quota limits, or invalid JSON schemas from the LLM, the raw file is moved to a `failed/` directory. This mitigates infinite retry loops and prevents API credit exhaustion.
-- **Token Tracking:** The application extracts `usage_metadata` from every Google API response, appending `prompt_tokens` and `candidates_tokens` to `logs/cost_tracker.jsonl` for deterministic cost auditing.
-- **Log Redaction:** A custom `APIRedactingFormatter` intercepts all output within the Python `logging` module, automatically scrubbing the user's `GEMINI_API_KEY` from disk logs and standard output streams.
-- **Injection Defenses:** Terminal escape characters associated with macOS iCloud paths are stripped natively. Shell scripts utilize bash parameter expansion (`${VAULT_PATH/#\~/$HOME}`) rather than `eval` to neutralize command injection. AppleScript notifications rigorously escape shell variables.
-
----
-
-## III. Setup and Installation
+## Quick Start Guide
 
 ### Prerequisites
-- **macOS:** Required for `launchctl` and `osascript` compatibility.
-- **Python 3:** Required in `PATH`.
-- **Node.js & npm:** Required for the Vite visualizer.
-- **Google Gemini API Key:** Obtainable via [Google AI Studio](https://aistudio.google.com/apikey).
+- **macOS:** Required for the background service and push notifications.
+- **Python 3:** Installed and in your PATH.
+- **Node.js & npm:** Installed (for the 3D visualizer).
+- **Obsidian:** Installed on your Mac.
+- **Google Gemini API Key:** Get a free one from [Google AI Studio](https://aistudio.google.com/apikey).
 
-### Deployment
+### Step 1: Setup the Engine
+The engine code lives in this repository, entirely separate from your actual notes.
 
-1. **Clone the Repository:**
-   Maintain the engine directory separately from the Obsidian Vault.
+1. Clone this repository:
    ```bash
    git clone https://github.com/yourusername/daemon-md.git
    cd daemon-md
    ```
-
-2. **Configure Environment:**
+2. Copy the environment template:
    ```bash
    cp .env.example .env
-   nano .env
    ```
-   Provide the absolute path to your Obsidian vault. *Paths containing spaces must be wrapped in double quotes.*
-
-3. **Initialize System:**
-   ```bash
-   ./install.sh
+3. Open `.env` and fill in your API key and the path where you want your new Obsidian Vault to live:
+   ```text
+   GEMINI_API_KEY="AIzaSyYourKeyHere..."
+   VAULT_PATH="~/Documents/My_AI_Vault"
    ```
-   The installer validates macOS Full Disk Access permissions, scaffolds the target vault directory structure, generates the `GEMINI.md` system instruction file, instantiates a local Python `venv`, and registers the `launchd` property list (`.plist`) agents.
 
-4. **Connect to Obsidian:**
-   - Open the **Obsidian** app on your Mac.
-   - Select **"Open folder as vault"**.
-   - Navigate to your designated `VAULT_PATH` and click **Open**.
-   - You can now drag and drop raw notes or audio files (e.g., iPhone `.m4a` voice memos) directly into the `raw/` folder to trigger the Daemon.
+### Step 2: Install and Start
+Run the installer script:
+```bash
+./install.sh
+```
+This script will:
+- Check your permissions.
+- Build the directory structure in your `VAULT_PATH`.
+- Setup a Python virtual environment and install dependencies.
+- Register the background service with macOS (`launchd`) so it runs silently forever.
+
+### Step 3: Open Obsidian
+1. Open the **Obsidian** app.
+2. Click **"Open folder as vault"**.
+3. Select the folder you defined in your `VAULT_PATH` and click **Open**.
+
+You are now ready to go!
 
 ---
 
-## IV. Lifecycle Management (CLI)
+## How to Use It (Day-to-Day)
 
-The repository provides modular bash utilities for system administration.
+### 1. Ingesting Raw Notes and Audio
+Inside your Vault, you will see a folder called `raw/`.
+This is your inbox.
 
-- `./status.sh`: Parses `launchctl` to verify daemon health, aggregates total token consumption from `cost_tracker.jsonl`, and outputs the latest rolling logs to the terminal.
-- `./update.sh`: Manages safe Git pulls (stashing uncommitted state), outputs a revision changelog, and invokes the idempotent installer to refresh dependencies and reload `launchd` services.
-- `./start_visualizer.sh`: Initiates the local Vite server on `localhost:5173` to render the 3D topology.
-- `./uninstall.sh`: Unloads and destroys the system `launchd` `.plist` files. It does not modify or delete the local repository or the target Vault.
+If you write a quick thought in a `.txt` file, or record a voice memo on your iPhone (`.m4a`) and drop it into the `raw/` folder, the background Daemon will immediately wake up. It will upload the file, transcribe it, analyze it against your existing wiki, and write new or updated markdown files into your `wiki/` folder. You will get a macOS push notification when it is done.
+
+### 2. Manual Edits
+You are not locked out of your own notes. If the AI generates a concept page and you want to fix a typo, add a paragraph, or write a completely new page yourself—just do it.
+
+When you type and save a file inside the `wiki/` folder, the Daemon notices. It automatically copies your manual edit back into the `raw/` inbox. This forces the AI to ingest your human thoughts and formally integrate them into the overall knowledge graph.
+
+### 3. The Source of Truth (Archiving)
+When the Daemon processes a file from the `raw/` folder, it does not delete it. It moves the original file into the `archive/` folder. This means you never lose your original voice memos or unedited notes.
 
 ---
 
-## V. Advanced Configuration
+## Available Commands
 
-### Autonomous Extraction (GEMINI.md)
-The taxonomy and behavioral logic of the Daemon are controlled entirely by the `GEMINI.md` file located at the vault root. The default prompt is optimized for Gemini 3.1 architecture, instructing the model to utilize Chain-of-Thought processing prior to output generation. Modifying this file alters the Daemon's parsing and structural routing behavior dynamically.
+This repository includes several bash scripts to help you manage the system. Run these from the `daemon-md` directory:
 
-### Target Models
-The engine relies on the Google GenAI SDK. Default models are defined in `.env.example` and can be overridden:
-- `GEMINI_MODEL_DAEMON="gemini-3.1-flash-lite-preview"`
-- `GEMINI_MODEL_LINTER="gemini-3.1-pro-preview"`
+- `./status.sh`
+  Checks if the background daemon is running, shows you how many API tokens you've used (and the cost), and prints the latest logs.
 
-### Logging
-Output streams from both the Python application and the macOS `launchd` service are routed to the `logs/` directory. Files (`daemon.log`, `linter.log`) utilize a `RotatingFileHandler` constrained to 5MB, maintaining a deterministic disk footprint over long-term operation.
+- `./start_visualizer.sh`
+  Starts a local web server (on `localhost:5173`). Open this in your browser to see a 3D, interactive map of your entire knowledge graph. It highlights "Ghost Nodes" (concepts the AI linked to, but hasn't fully written a page for yet).
+
+- `python rebuild.py`
+  Because your original notes are saved in the `archive/`, you can rebuild the entire system from scratch. This script warns you, wipes the generated wiki, and feeds your entire history back through the Daemon. Use this in a year when a much smarter AI model is released to retroactively upgrade all your old notes.
+
+- `./update.sh`
+  Pulls the latest code from GitHub and safely restarts the background services.
+
+- `./uninstall.sh`
+  Stops the background services and removes them from macOS. (This does *not* delete your Obsidian Vault or your notes).
