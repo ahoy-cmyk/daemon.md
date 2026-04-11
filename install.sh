@@ -64,6 +64,26 @@ GEMINI_MD_PATH="$VAULT_ABS_PATH/GEMINI.md"
 if [ ! -f "$GEMINI_MD_PATH" ]; then
     echo -e "  [${CYAN}⚙${NC}] Generating boilerplate GEMINI.md master prompt..."
     cat << 'EOF' > "$GEMINI_MD_PATH"
+<!--
+=============================================================================
+  GEMINI.md - The Master Prompt for Daemon.md
+=============================================================================
+
+This file acts as the primary "System Instruction" for the Daemon.md AI engine.
+Every time you add a new raw note or voice memo, the AI reads this file first
+to understand HOW it should process your data, WHAT format to use, and WHICH
+rules to follow.
+
+HOW TO USE THIS FILE:
+- You are highly encouraged to edit this file!
+- Add your own rules, formatting preferences, or custom categories.
+- Example: "Always write notes in the tone of a pirate."
+- Example: "If a note mentions 'Groceries', route it to a specific checklist."
+- The Daemon will automatically apply these rules on the next ingestion.
+
+=============================================================================
+-->
+
 # Role and Objective
 You are Daemon.md, an autonomous knowledge extraction engine.
 Your purpose is to eagerly compile raw notes, ideas, and data into a highly structured, interconnected markdown knowledge graph.

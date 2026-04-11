@@ -73,6 +73,11 @@ When you type and save a file inside the `wiki/` folder, the Daemon notices. It 
 ### 3. The Source of Truth (Archiving)
 When the Daemon processes a file from the `raw/` folder, it does not delete it. It moves the original file into the `archive/` folder. This means you never lose your original voice memos or unedited notes.
 
+### 4. Customizing the AI (GEMINI.md)
+Inside your Vault, you will find a file named `GEMINI.md`. This is the **Master Prompt** for the system.
+Every time the Daemon processes a note, it reads `GEMINI.md` to understand how it should behave.
+You can edit this file to give the AI custom instructions. For example, you can tell it to use a specific tone, categorize notes into new folders, or look out for specific keywords (e.g., "If I mention 'Groceries', always add it to a checklist").
+
 ---
 
 ## Available Commands

@@ -2,9 +2,11 @@ import os
 import sys
 import logging
 import subprocess
+import json
 from pathlib import Path
 from google import genai
 from google.genai import errors
+from google.genai import types
 from dotenv import load_dotenv
 import graph_builder
 import metrics
@@ -117,7 +119,8 @@ You are the master Synthesis Linter for an autonomous Obsidian knowledge graph.
 Your singular directive is to audit the entire wiki graph, looking for the hidden architecture of thought.
 
 Review the vault contents provided within the <vault_content> tags below.
-You must produce a highly structured, beautiful Markdown report with the following exact sections:
+
+First, you must produce a highly structured, beautiful Markdown report with the following exact sections:
 
 # 🔮 Weekly Synthesis Report
 
@@ -132,6 +135,15 @@ Where can two separate notes be merged to form a stronger, unified thesis? Sugge
 
 ## 🛠️ Actionable Recommendations
 Provide a checklist (`- [ ]`) of 3 to 5 specific things the user should do this week to improve the graph's structure or depth.
+
+Then, after the Markdown report, you MUST output a JSON code block containing the automated file changes needed to apply your recommendations.
+The JSON must be an array of objects, where each object has:
+- `filepath`: The relative path within the vault where this should be written (e.g., "wiki/concepts/AI.md").
+- `content`: The complete, fully written markdown content to be saved to the file, incorporating the fixes.
+- `reason`: A short explanation of what was fixed (e.g., "Added wikilink to orphaned node").
+
+Output the JSON strictly inside a ```json code block at the very end of your response.
+If no automated fixes are needed, output an empty array: ```json\n[]\n```
 
 <vault_content>
 {wiki_payload}
@@ -148,8 +160,69 @@ Provide a checklist (`- [ ]`) of 3 to 5 specific things the user should do this 
         if hasattr(response, 'usage_metadata'):
             metrics.track_usage("lint_wiki.py", MODEL_NAME, response.usage_metadata)
 
+        response_text = response.text
+
+        # Parse the response to separate the markdown report and the JSON automated fixes
+        markdown_report = response_text
+        automated_fixes = []
+
+        json_start = response_text.rfind("```json")
+        if json_start != -1:
+            # Use rfind for the end tag to handle backticks inside the JSON content
+            json_end = response_text.rfind("```")
+            if json_end > json_start:
+                json_str = response_text[json_start + 7:json_end].strip()
+                markdown_report = response_text[:json_start].strip()
+                try:
+                    decoded = json.loads(json_str)
+                    # Ensure the result is a list of dictionaries
+                    if isinstance(decoded, list):
+                        automated_fixes = [f for f in decoded if isinstance(f, dict)]
+                    else:
+                        logging.error("Automated fixes JSON is not a list.")
+                except json.JSONDecodeError as e:
+                    logging.error(f"Failed to parse automated fixes JSON: {e}")
+
+        applied_fixes_log = []
+
+        # Apply the automated fixes
+        if automated_fixes:
+            logging.info(f"Applying {len(automated_fixes)} automated fixes...")
+            for fix in automated_fixes:
+                rel_path = fix.get("filepath")
+                content = fix.get("content")
+                reason = fix.get("reason", "Automated fix applied.")
+
+                if not rel_path or not content:
+                    logging.warning(f"Incomplete fix object skipped: {fix}")
+                    continue
+
+                target_path = (VAULT_DIR / rel_path).resolve()
+
+                # Prevent Directory Traversal
+                if not target_path.is_relative_to(VAULT_DIR):
+                    logging.error(f"Path traversal blocked in automated fix: Attempted to write to {target_path}")
+                    continue
+
+                try:
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(target_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+
+                    logging.info(f"Automated fix applied to {target_path.name}: {reason}")
+                    applied_fixes_log.append(f"- **{rel_path}**: {reason}")
+                except Exception as e:
+                    logging.error(f"Failed to apply fix to {target_path}: {e}")
+
+        # Append applied fixes to the Markdown report
+        if applied_fixes_log:
+            markdown_report += "\n\n## 🤖 Automatically Applied Fixes\n"
+            markdown_report += "\n".join(applied_fixes_log)
+        else:
+            markdown_report += "\n\n## 🤖 Automatically Applied Fixes\nNo automated fixes were applied during this run.\n"
+
         with open(REPORT_PATH, "w", encoding="utf-8") as f:
-            f.write(response.text)
+            f.write(markdown_report)
 
         logging.info(f"Successfully generated Maintenance Report at {REPORT_PATH}")
 
@@ -159,7 +232,11 @@ Provide a checklist (`- [ ]`) of 3 to 5 specific things the user should do this 
         except Exception as ge:
             logging.error(f"Failed to rebuild graph after linting: {ge}")
 
-        send_notification("Daemon.md Linter", "Weekly Maintenance Report generated.")
+        notification_msg = "Weekly Maintenance Report generated."
+        if applied_fixes_log:
+            notification_msg += f" {len(applied_fixes_log)} automatic fixes applied."
+
+        send_notification("Daemon.md Linter", notification_msg)
 
     except errors.APIError as api_err:
         logging.error(f"Gemini API Error during synthesis (Check token limits or quota): {api_err}")

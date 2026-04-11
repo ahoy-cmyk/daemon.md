@@ -288,6 +288,25 @@ NEW RAW CONTENT TO INGEST:
             except Exception as e:
                 logging.error(f"Failed to delete uploaded media {uploaded_file.name}: {e}")
 
+def move_to_failed(file_path: Path):
+    """Safely moves a failed file, with a fallback to unlink to prevent infinite loops."""
+    if not file_path.exists():
+        return
+    try:
+        failed_path = FAILED_DIR / file_path.name
+        if failed_path.exists():
+            failed_path = FAILED_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
+        shutil.move(str(file_path), str(failed_path))
+        logging.info(f"Moved errored raw file to {failed_path}")
+        send_notification("Daemon.md Error", f"Failed to process {file_path.name}. File moved to failed/")
+    except Exception as move_e:
+        logging.error(f"Failed to move {file_path.name} to failed directory: {move_e}")
+        try:
+            file_path.unlink(missing_ok=True)
+            logging.info(f"Deleted {file_path.name} as a fallback to prevent infinite loop.")
+        except Exception as unlink_e:
+            logging.error(f"Fallback deletion failed for {file_path.name}: {unlink_e}")
+
 def process_raw_file(file_path):
     """Wrapper that calls core processing and handles archiving or moving to failed dir."""
     file_path = Path(file_path)
@@ -300,24 +319,20 @@ def process_raw_file(file_path):
             logging.info(f"Archived processed file to {archive_path}")
         except Exception as e:
             logging.error(f"Failed to move {file_path.name} to archive directory: {e}")
+            move_to_failed(file_path)
     else:
-        # Move to failed directory to prevent infinite retry loops
-        try:
-            failed_path = FAILED_DIR / file_path.name
-            if failed_path.exists():
-                failed_path = FAILED_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
-            shutil.move(str(file_path), str(failed_path))
-            logging.info(f"Moved errored raw file to {failed_path}")
-            send_notification("Daemon.md Error", f"Failed to process {file_path.name}. File moved to failed/")
-        except Exception as move_e:
-            logging.error(f"Failed to move {file_path.name} to failed directory: {move_e}")
-            send_notification("Daemon.md Error", f"Critical Error handling {file_path.name}")
+        move_to_failed(file_path)
+
 processing_files = set()
 processing_lock = threading.Lock()
 
 def safe_process_raw_file(file_path):
     """Wrapper to prevent duplicate processing of the same file."""
     path_str = str(file_path)
+
+    # Immediately drop queued events for files that were already processed and moved
+    if not Path(path_str).exists():
+        return
 
     with processing_lock:
         if path_str in processing_files:
@@ -344,16 +359,16 @@ def handle_file_async(file_path):
     time.sleep(1)
     safe_process_raw_file(file_path)
 
-def handle_wiki_edit_async(file_path):
-    """Processes a manual edit detected in the wiki directory."""
+debounce_timers = {}
+debounce_lock = threading.Lock()
+
+def _process_debounced_wiki_edit(file_path):
+    """The actual worker function that runs after the debounce timer finishes."""
     path_str = str(file_path)
     file_path = Path(file_path)
 
     if is_rebuild_in_progress():
         return
-
-    # Short delay to allow the OS to finish writing the file
-    time.sleep(1)
 
     with daemon_write_lock:
         last_written = daemon_written_files.get(path_str, 0)
@@ -361,15 +376,35 @@ def handle_wiki_edit_async(file_path):
         if time.time() - last_written < 5:
             return
 
-    logging.info(f"Manual edit detected in wiki: {file_path.name}")
+    logging.info(f"Manual edit detected and debounced in wiki: {file_path.name}")
 
     try:
         # Copy the edited file into the raw directory to trigger the Self-Feedback Loop
         dest_path = RAW_DIR / f"manual_edit_{int(time.time())}_{file_path.name}"
-        shutil.copy2(str(file_path), str(dest_path))
+        # Use standard read/write loop to avoid iCloud macOS `fcopyfile` deadlocks
+        with open(file_path, 'rb') as src, open(dest_path, 'wb') as dst:
+            shutil.copyfileobj(src, dst)
         logging.info(f"Copied manual edit to {dest_path} for ingestion.")
     except Exception as e:
         logging.error(f"Failed to capture manual edit for {file_path.name}: {e}")
+
+    # Clean up the timer reference
+    with debounce_lock:
+        if path_str in debounce_timers:
+            del debounce_timers[path_str]
+
+def handle_wiki_edit_async(file_path):
+    """Debounces manual edits to prevent rapid-fire auto-saves from flooding the daemon."""
+    path_str = str(file_path)
+
+    with debounce_lock:
+        if path_str in debounce_timers:
+            debounce_timers[path_str].cancel()
+
+        # Wait 10 seconds for the user to finish typing/auto-saving before copying
+        timer = threading.Timer(10.0, _process_debounced_wiki_edit, args=[file_path])
+        debounce_timers[path_str] = timer
+        timer.start()
 
 class WikiFolderHandler(FileSystemEventHandler):
     def on_modified(self, event):

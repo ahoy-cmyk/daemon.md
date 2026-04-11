@@ -23,11 +23,18 @@ This project does **not** use standard RAG (Retrieval-Augmented Generation) or v
 - `daemon.py` actively watches the `wiki/` directory. If it detects a file was created or modified by the user (ignoring its own programmatic writes), it automatically copies that modified file into the `raw/` directory.
 - This forces the system to treat manual edits as "new raw input". The AI digests the manual edit, formalizes it, and the raw copied file is placed into `archive/`.
 - **Result:** Manual edits become part of the archived source of truth, meaning they will be perfectly preserved and re-integrated during a system rebuild.
+- **Debouncing:** To prevent excessive file ingestion due to rapid auto-saves (e.g., from Obsidian), manual edits are debounced using `threading.Timer`. Do not remove this debouncing logic.
+
+## 🧠 Master Prompt & Automation
+- The `GEMINI.md` file located in the user's vault acts as the master system prompt for `daemon.py`.
+- **Agents are encouraged to edit/evolve `GEMINI.md`** to refine the AI's categorization rules, tone, and markdown formatting instructions based on the user's evolving needs.
+- `lint_wiki.py` not only generates a weekly synthesis report but also automatically applies its suggested fixes to the vault by parsing a JSON response from the LLM.
 
 ## 🔒 Environment & Permissions
 - The Python execution engine runs completely outside of the target Obsidian vault directory to prevent polluting it.
 - We heavily rely on absolute paths derived from the user's `.env`.
 - **Security:** iCloud sync paths can cause macOS `Resource deadlock avoided` errors or file locking issues. Always use robust copy/read/unlink loops with `try/except OSError` blocks (as seen in `daemon.py`) rather than assuming immediate file availability.
+- **iCloud Race Conditions:** iCloud sync fires multiple duplicate `modified` events rapidly. Always explicitly check file existence (`if not file_path.exists(): return`) inside processing wrappers before attempting to act on a queued event.
 - All Google API usage is logged and tracked locally for cost monitoring. Always ensure the API keys are scrubbed from log files using the custom `APIRedactingFormatter`.
 
 ## 📦 External Dependencies
