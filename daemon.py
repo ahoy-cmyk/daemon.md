@@ -34,12 +34,14 @@ CLEANED_VAULT_PATH = VAULT_PATH_RAW.replace("\\ ", " ").replace("\\~", "~").repl
 
 VAULT_DIR = Path(CLEANED_VAULT_PATH).expanduser().resolve()
 RAW_DIR = VAULT_DIR / "raw"
+ARCHIVE_DIR = VAULT_DIR / "archive"
 FAILED_DIR = VAULT_DIR / "failed"
 GEMINI_MD_PATH = VAULT_DIR / "GEMINI.md"
 
 # Ensure directories exist
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 FAILED_DIR.mkdir(parents=True, exist_ok=True)
+ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Configure Gemini
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -114,25 +116,26 @@ def get_graph_context():
             logging.error(f"Failed to read graph context: {e}")
     return '{"nodes":[],"links":[]}'
 
-def process_raw_file(file_path):
-    """Processes a new raw markdown file with Gemini."""
+def process_file_core(file_path, is_rebuild=False):
+    """Core logic to process a file with Gemini. Returns True if successful, False otherwise."""
     file_path = Path(file_path)
     if not file_path.exists():
-        return
+        return False
 
-    # Wait for the file to finish writing (e.g., from iCloud or Voice Memos)
-    # Give up after 10 attempts (10 seconds)
-    for _ in range(10):
-        try:
-            if file_path.stat().st_size > 0:
-                break
-        except FileNotFoundError:
-            return
-        except OSError:
-            pass
-        time.sleep(1)
+    if not is_rebuild:
+        # Wait for the file to finish writing (e.g., from iCloud or Voice Memos)
+        # Give up after 10 attempts (10 seconds)
+        for _ in range(10):
+            try:
+                if file_path.stat().st_size > 0:
+                    break
+            except FileNotFoundError:
+                return False
+            except OSError:
+                pass
+            time.sleep(1)
 
-    logging.info(f"Processing new raw file: {file_path.name}")
+    logging.info(f"Processing file: {file_path.name}")
 
     uploaded_file = None
     try:
@@ -217,14 +220,7 @@ NEW RAW CONTENT TO INGEST:
         except json.JSONDecodeError as e:
             logging.error(f"Failed to parse Gemini output as JSON: {e}")
             logging.error(f"Raw output: {response.text}")
-            # Move to failed directory to prevent infinite retry loops
-            failed_path = FAILED_DIR / file_path.name
-            if failed_path.exists():
-                failed_path = FAILED_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
-            shutil.move(str(file_path), str(failed_path))
-            logging.info(f"Moved unparseable raw file to {failed_path}")
-            send_notification("Daemon.md Error", "Failed to parse Gemini output as JSON. File moved to failed/")
-            return
+            return False
 
         actions_taken = []
 
@@ -259,18 +255,6 @@ NEW RAW CONTENT TO INGEST:
             actions_taken.append(f"Updated {target_path.name}")
             logging.info(f"Wrote to {target_path}")
 
-        # Delete the raw file with retry to avoid iCloud deadlocks
-        for attempt in range(3):
-            try:
-                file_path.unlink(missing_ok=True)
-                logging.info(f"Deleted raw file: {file_path.name}")
-                break
-            except OSError as e:
-                if attempt == 2:
-                    logging.warning(f"Failed to delete raw file {file_path.name} after 3 attempts: {e}")
-                else:
-                    time.sleep(1)
-
         # Update graph JSON
         try:
             graph_builder.build_graph()
@@ -282,8 +266,32 @@ NEW RAW CONTENT TO INGEST:
         else:
             send_notification("Daemon.md", "Processed file but no actions taken.")
 
+        return True
+
     except Exception as e:
         logging.error(f"Error processing {file_path.name}: {e}", exc_info=True)
+        return False
+    finally:
+        if uploaded_file:
+            try:
+                logging.info(f"Deleting uploaded media from Gemini API: {uploaded_file.name}")
+                client.files.delete(name=uploaded_file.name)
+            except Exception as e:
+                logging.error(f"Failed to delete uploaded media {uploaded_file.name}: {e}")
+
+def process_raw_file(file_path):
+    """Wrapper that calls core processing and handles archiving or moving to failed dir."""
+    file_path = Path(file_path)
+    success = process_file_core(file_path)
+    if success:
+        # Move to archive directory
+        try:
+            archive_path = ARCHIVE_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
+            shutil.move(str(file_path), str(archive_path))
+            logging.info(f"Archived processed file to {archive_path}")
+        except Exception as e:
+            logging.error(f"Failed to move {file_path.name} to archive directory: {e}")
+    else:
         # Move to failed directory to prevent infinite retry loops
         try:
             failed_path = FAILED_DIR / file_path.name
@@ -294,14 +302,7 @@ NEW RAW CONTENT TO INGEST:
             send_notification("Daemon.md Error", f"Failed to process {file_path.name}. File moved to failed/")
         except Exception as move_e:
             logging.error(f"Failed to move {file_path.name} to failed directory: {move_e}")
-            send_notification("Daemon.md Error", f"Critical Error processing {file_path.name}")
-    finally:
-        if uploaded_file:
-            try:
-                logging.info(f"Deleting uploaded media from Gemini API: {uploaded_file.name}")
-                client.files.delete(name=uploaded_file.name)
-            except Exception as e:
-                logging.error(f"Failed to delete uploaded media {uploaded_file.name}: {e}")
+            send_notification("Daemon.md Error", f"Critical Error handling {file_path.name}")
 processing_files = set()
 processing_lock = threading.Lock()
 
