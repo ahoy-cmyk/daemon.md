@@ -50,6 +50,8 @@ MODEL_NAME = os.getenv("GEMINI_MODEL_DAEMON", "gemini-3.1-flash-lite-preview")
 # Configurable polling interval (default to 15 seconds)
 POLL_INTERVAL = int(os.getenv("DAEMON_POLL_INTERVAL", "15"))
 
+SUPPORTED_EXTENSIONS = {'.md', '.txt', '.m4a', '.mp3', '.wav', '.ogg', '.flac', '.aac'}
+
 # Configure Robust Rotating Logging
 LOG_DIR = SCRIPT_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -120,10 +122,8 @@ def process_raw_file(file_path):
 
     logging.info(f"Processing new raw file: {file_path.name}")
 
+    uploaded_file = None
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            raw_content = f.read()
-
         master_prompt = ""
         if GEMINI_MD_PATH.exists():
             with open(GEMINI_MD_PATH, "r", encoding="utf-8") as f:
@@ -150,19 +150,35 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
 ---
 """
 
-        prompt = f"""
-Analyze the following newly added markdown content.
+        # Handle text vs audio files
+        is_audio = file_path.suffix.lower() in {'.m4a', '.mp3', '.wav', '.ogg', '.flac', '.aac'}
+
+        if is_audio:
+            logging.info(f"Uploading audio file to Gemini API: {file_path.name}")
+            uploaded_file = client.files.upload(file=str(file_path))
+
+            prompt = """
+Listen to the attached audio file. Carefully transcribe and analyze the spoken content.
+Extract the core concepts, tasks, and entities exactly as you would for a text note.
+"""
+            api_contents = [uploaded_file, prompt]
+        else:
+            with open(file_path, "r", encoding="utf-8") as f:
+                raw_content = f.read()
+            prompt = f"""
+Analyze the following newly added text content.
 
 NEW RAW CONTENT TO INGEST:
 ---
 {raw_content}
 ---
 """
+            api_contents = prompt
 
         # Using generation_config for JSON mode and system instructions
         response = client.models.generate_content(
             model=MODEL_NAME,
-            contents=prompt,
+            contents=api_contents,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 system_instruction=system_instruction
@@ -249,6 +265,13 @@ NEW RAW CONTENT TO INGEST:
         except Exception as move_e:
             logging.error(f"Failed to move {file_path.name} to failed directory: {move_e}")
             send_notification("Daemon.md Error", f"Critical Error processing {file_path.name}")
+    finally:
+        if uploaded_file:
+            try:
+                logging.info(f"Deleting uploaded media from Gemini API: {uploaded_file.name}")
+                client.files.delete(name=uploaded_file.name)
+            except Exception as e:
+                logging.error(f"Failed to delete uploaded media {uploaded_file.name}: {e}")
 processing_files = set()
 processing_lock = threading.Lock()
 
@@ -278,24 +301,24 @@ def handle_file_async(file_path):
 
 class RawFolderHandler(FileSystemEventHandler):
     def on_created(self, event):
-        if not event.is_directory and event.src_path.endswith('.md'):
+        if not event.is_directory and Path(event.src_path).suffix.lower() in SUPPORTED_EXTENSIONS:
             executor.submit(handle_file_async, event.src_path)
 
     def on_moved(self, event):
         # Catch files moved/renamed into the directory
-        if not event.is_directory and event.dest_path.endswith('.md'):
+        if not event.is_directory and Path(event.dest_path).suffix.lower() in SUPPORTED_EXTENSIONS:
             if Path(event.dest_path).parent == RAW_DIR:
                 executor.submit(handle_file_async, event.dest_path)
 
     def on_modified(self, event):
         # Catch files synced via iCloud that may bypass creation events
-        if not event.is_directory and event.src_path.endswith('.md'):
+        if not event.is_directory and Path(event.src_path).suffix.lower() in SUPPORTED_EXTENSIONS:
             executor.submit(handle_file_async, event.src_path)
 
 def periodic_scan():
     """Fallback scanner to catch files if filesystem events fail (common on iCloud)."""
-    for file in RAW_DIR.glob("*.md"):
-        if file.exists():
+    for file in RAW_DIR.iterdir():
+        if file.is_file() and file.suffix.lower() in SUPPORTED_EXTENSIONS:
             safe_process_raw_file(file)
 
 def main():

@@ -16,11 +16,12 @@ The Daemon.md system maintains a strict separation of logic and data. The execut
 A continuous Python process monitoring the `raw/` inbox directory. It uses the `watchdog` library to capture filesystem `on_created` events, supplemented by an `on_modified` handler to capture silent remote synchronizations (e.g., iCloud Drive). A 60-second polling sweep ensures eventual consistency if `FSEvents` are dropped by the OS.
 
 **Workflow:**
-1. A raw note is detected and locked via `threading.Lock()` to prevent race conditions.
-2. The daemon loads `latent_space.json`, providing the LLM with the complete structural topology of the vault without the token overhead of reading raw file contents.
-3. The context is routed to `gemini-3.1-flash-lite-preview`. The model natively outputs a structured JSON array, routing the analyzed data into three categories: Entities, Concepts, or Action Items.
-4. Target markdown files are completely rewritten to integrate the new context, avoiding fragmented append operations.
-5. The raw note is deleted, and a native macOS push notification is dispatched via `osascript`.
+1. A raw file (`.md`, `.txt`, or audio like `.m4a`, `.mp3`) is detected and locked via `threading.Lock()` to prevent race conditions.
+2. If the file is an audio recording (e.g., an iPhone Voice Memo), it is securely uploaded to the Gemini API for native transcription and analysis.
+3. The daemon loads `latent_space.json`, providing the LLM with the complete structural topology of the vault.
+4. The context is routed to the configured Gemini model (default: `gemini-3.1-flash-lite-preview`). The model natively outputs a structured JSON array, mapping the transcribed audio or text into interconnected markdown concepts and action items.
+5. Target markdown files are updated or generated, and the raw source file (and remote API upload) is securely deleted.
+6. A native macOS push notification is dispatched to confirm completion.
 
 ### 2. The Synthesis Linter (`lint_wiki.py`)
 A `launchd` scheduled task (cron) executing every Sunday at 3:00 AM.
@@ -83,7 +84,7 @@ The application is engineered to run indefinitely as a local service, implementi
    - Open the **Obsidian** app on your Mac.
    - Select **"Open folder as vault"**.
    - Navigate to your designated `VAULT_PATH` and click **Open**.
-   - You can now drag and drop raw notes directly into the `raw/` folder within the Obsidian interface to trigger the Daemon.
+   - You can now drag and drop raw notes or audio files (e.g., iPhone `.m4a` voice memos) directly into the `raw/` folder to trigger the Daemon.
 
 ---
 
