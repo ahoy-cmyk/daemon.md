@@ -173,7 +173,9 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
                 temp_path = tmp.name
 
             try:
-                shutil.copy2(file_path, temp_path)
+                # Use standard read/write instead of shutil.copy2 to avoid iCloud fcopyfile Resource Deadlocks
+                with open(file_path, "rb") as src, open(temp_path, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
                 uploaded_file = client.files.upload(file=temp_path)
             finally:
                 if os.path.exists(temp_path):
