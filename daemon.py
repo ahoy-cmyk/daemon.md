@@ -334,8 +334,13 @@ def safe_process_raw_file(file_path):
 # Global ThreadPoolExecutor for background processing
 executor = ThreadPoolExecutor(max_workers=4)
 
+def is_rebuild_in_progress():
+    return (VAULT_DIR / ".rebuild_lock").exists()
+
 def handle_file_async(file_path):
     """Wait briefly, then process the file. This runs in a worker thread."""
+    if is_rebuild_in_progress():
+        return
     time.sleep(1)
     safe_process_raw_file(file_path)
 
@@ -343,6 +348,9 @@ def handle_wiki_edit_async(file_path):
     """Processes a manual edit detected in the wiki directory."""
     path_str = str(file_path)
     file_path = Path(file_path)
+
+    if is_rebuild_in_progress():
+        return
 
     # Short delay to allow the OS to finish writing the file
     time.sleep(1)

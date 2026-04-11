@@ -1,6 +1,8 @@
 # 🤖 Agent Instructions for Daemon.md
 
-Welcome to the Daemon.md project! If you are an autonomous AI or coding assistant working on this repository, please read these guidelines carefully.
+Welcome to the Daemon.md project! If you are an AI or coding assistant working on this repository, please read these guidelines carefully.
+
+*(For a deeper technical dive into the rationale behind these rules, read `docs/ARCHITECTURE.md`)*
 
 ## 🏛️ Core Architecture: Eager Compilation vs RAG
 This project does **not** use standard RAG (Retrieval-Augmented Generation) or vector databases. Instead, it uses **Eager Compilation**.
