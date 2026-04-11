@@ -7,6 +7,7 @@ import subprocess
 import shutil
 import threading
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from google import genai
@@ -45,6 +46,11 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Configurable models (default to 3.1 flash-lite if not provided)
 MODEL_NAME = os.getenv("GEMINI_MODEL_DAEMON", "gemini-3.1-flash-lite-preview")
+
+# Configurable polling interval (default to 15 seconds)
+POLL_INTERVAL = int(os.getenv("DAEMON_POLL_INTERVAL", "15"))
+
+SUPPORTED_EXTENSIONS = {'.md', '.txt', '.m4a', '.mp3', '.wav', '.ogg', '.flac', '.aac'}
 
 # Configure Robust Rotating Logging
 LOG_DIR = SCRIPT_DIR / "logs"
@@ -85,11 +91,13 @@ logging.basicConfig(
 
 def send_notification(title, message):
     """Sends a native macOS push notification safely."""
-    # Prevent AppleScript injection by fully escaping both backslashes and double quotes
-    escaped_title = title.replace('\\', '\\\\').replace('"', '\\"')
-    escaped_message = message.replace('\\', '\\\\').replace('"', '\\"')
-    apple_script = f'display notification "{escaped_message}" with title "{escaped_title}"'
-    subprocess.run(["osascript", "-e", apple_script])
+    subprocess.run([
+        "osascript",
+        "-e", "on run argv",
+        "-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+        "-e", "end run",
+        title, message
+    ])
 
 def get_graph_context():
     """Reads latent_space.json to provide structural context instead of raw file reads."""
@@ -114,10 +122,8 @@ def process_raw_file(file_path):
 
     logging.info(f"Processing new raw file: {file_path.name}")
 
+    uploaded_file = None
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            raw_content = f.read()
-
         master_prompt = ""
         if GEMINI_MD_PATH.exists():
             with open(GEMINI_MD_PATH, "r", encoding="utf-8") as f:
@@ -125,11 +131,10 @@ def process_raw_file(file_path):
 
         graph_context = get_graph_context()
 
-        prompt = f"""
+        system_instruction = f"""
 {master_prompt}
 
 You are an automated knowledge extraction system.
-Analyze the following newly added markdown content.
 
 If the information updates existing knowledge, output a 'wiki_update'. For wiki_updates, you MUST rewrite the ENTIRE existing target file (if any) with the new context seamlessly integrated. Do not just append. We have provided the existing semantic map of the vault below so you know what files already exist to update.
 If the information is an actionable task or an action item executed, output a 'task_completion'.
@@ -143,19 +148,40 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
 ---
 {graph_context}
 ---
+"""
+
+        # Handle text vs audio files
+        is_audio = file_path.suffix.lower() in {'.m4a', '.mp3', '.wav', '.ogg', '.flac', '.aac'}
+
+        if is_audio:
+            logging.info(f"Uploading audio file to Gemini API: {file_path.name}")
+            uploaded_file = client.files.upload(file=str(file_path))
+
+            prompt = """
+Listen to the attached audio file. Carefully transcribe and analyze the spoken content.
+Extract the core concepts, tasks, and entities exactly as you would for a text note.
+"""
+            api_contents = [uploaded_file, prompt]
+        else:
+            with open(file_path, "r", encoding="utf-8") as f:
+                raw_content = f.read()
+            prompt = f"""
+Analyze the following newly added text content.
 
 NEW RAW CONTENT TO INGEST:
 ---
 {raw_content}
 ---
 """
+            api_contents = prompt
 
-        # Using generation_config for JSON mode
+        # Using generation_config for JSON mode and system instructions
         response = client.models.generate_content(
             model=MODEL_NAME,
-            contents=prompt,
+            contents=api_contents,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
+                system_instruction=system_instruction
             )
         )
 
@@ -171,6 +197,8 @@ NEW RAW CONTENT TO INGEST:
             logging.error(f"Raw output: {response.text}")
             # Move to failed directory to prevent infinite retry loops
             failed_path = FAILED_DIR / file_path.name
+            if failed_path.exists():
+                failed_path = FAILED_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
             shutil.move(str(file_path), str(failed_path))
             logging.info(f"Moved unparseable raw file to {failed_path}")
             send_notification("Daemon.md Error", "Failed to parse Gemini output as JSON. File moved to failed/")
@@ -187,7 +215,17 @@ NEW RAW CONTENT TO INGEST:
                 logging.warning(f"Incomplete update object: {update}")
                 continue
 
-            target_path = VAULT_DIR / rel_path
+            # Prevent empty file overwrites
+            if not str(content).strip():
+                logging.warning(f"Skipping empty content update for {rel_path}")
+                continue
+
+            target_path = (VAULT_DIR / rel_path).resolve()
+
+            # Prevent Directory Traversal
+            if not target_path.is_relative_to(VAULT_DIR):
+                logging.error(f"Path traversal blocked: Attempted to write to {target_path}")
+                continue
 
             # Ensure the directory exists
             target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -219,12 +257,21 @@ NEW RAW CONTENT TO INGEST:
         # Move to failed directory to prevent infinite retry loops
         try:
             failed_path = FAILED_DIR / file_path.name
+            if failed_path.exists():
+                failed_path = FAILED_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
             shutil.move(str(file_path), str(failed_path))
             logging.info(f"Moved errored raw file to {failed_path}")
             send_notification("Daemon.md Error", f"Failed to process {file_path.name}. File moved to failed/")
         except Exception as move_e:
             logging.error(f"Failed to move {file_path.name} to failed directory: {move_e}")
             send_notification("Daemon.md Error", f"Critical Error processing {file_path.name}")
+    finally:
+        if uploaded_file:
+            try:
+                logging.info(f"Deleting uploaded media from Gemini API: {uploaded_file.name}")
+                client.files.delete(name=uploaded_file.name)
+            except Exception as e:
+                logging.error(f"Failed to delete uploaded media {uploaded_file.name}: {e}")
 processing_files = set()
 processing_lock = threading.Lock()
 
@@ -244,34 +291,38 @@ def safe_process_raw_file(file_path):
             if path_str in processing_files:
                 processing_files.remove(path_str)
 
+# Global ThreadPoolExecutor for background processing
+executor = ThreadPoolExecutor(max_workers=4)
+
+def handle_file_async(file_path):
+    """Wait briefly, then process the file. This runs in a worker thread."""
+    time.sleep(1)
+    safe_process_raw_file(file_path)
+
 class RawFolderHandler(FileSystemEventHandler):
     def on_created(self, event):
-        if not event.is_directory and event.src_path.endswith('.md'):
-            # Small delay to ensure file is completely written before reading
-            time.sleep(1)
-            safe_process_raw_file(event.src_path)
+        if not event.is_directory and Path(event.src_path).suffix.lower() in SUPPORTED_EXTENSIONS:
+            executor.submit(handle_file_async, event.src_path)
 
     def on_moved(self, event):
         # Catch files moved/renamed into the directory
-        if not event.is_directory and event.dest_path.endswith('.md'):
+        if not event.is_directory and Path(event.dest_path).suffix.lower() in SUPPORTED_EXTENSIONS:
             if Path(event.dest_path).parent == RAW_DIR:
-                time.sleep(1)
-                safe_process_raw_file(event.dest_path)
+                executor.submit(handle_file_async, event.dest_path)
 
     def on_modified(self, event):
         # Catch files synced via iCloud that may bypass creation events
-        if not event.is_directory and event.src_path.endswith('.md'):
-            time.sleep(1)
-            safe_process_raw_file(event.src_path)
+        if not event.is_directory and Path(event.src_path).suffix.lower() in SUPPORTED_EXTENSIONS:
+            executor.submit(handle_file_async, event.src_path)
 
 def periodic_scan():
     """Fallback scanner to catch files if filesystem events fail (common on iCloud)."""
-    for file in RAW_DIR.glob("*.md"):
-        if file.exists():
+    for file in RAW_DIR.iterdir():
+        if file.is_file() and file.suffix.lower() in SUPPORTED_EXTENSIONS:
             safe_process_raw_file(file)
 
 def main():
-    logging.info(f"Starting Daemon.md watching {RAW_DIR}")
+    logging.info(f"Starting Daemon.md watching {RAW_DIR} with {POLL_INTERVAL}s polling fallback")
 
     event_handler = RawFolderHandler()
     observer = Observer()
@@ -283,11 +334,12 @@ def main():
 
     try:
         while True:
-            # Lazy sweep every 60 seconds as a highly efficient fallback to watchdog
-            time.sleep(60)
+            time.sleep(POLL_INTERVAL)
             periodic_scan()
     except KeyboardInterrupt:
         observer.stop()
+    finally:
+        executor.shutdown(wait=False)
     observer.join()
 
 if __name__ == "__main__":

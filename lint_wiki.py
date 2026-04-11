@@ -75,11 +75,13 @@ logging.basicConfig(
 
 def send_notification(title, message):
     """Sends a native macOS push notification safely."""
-    # Prevent AppleScript injection by fully escaping both backslashes and double quotes
-    escaped_title = title.replace('\\', '\\\\').replace('"', '\\"')
-    escaped_message = message.replace('\\', '\\\\').replace('"', '\\"')
-    apple_script = f'display notification "{escaped_message}" with title "{escaped_title}"'
-    subprocess.run(["osascript", "-e", apple_script])
+    subprocess.run([
+        "osascript",
+        "-e", "on run argv",
+        "-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+        "-e", "end run",
+        title, message
+    ])
 
 def collect_wiki_contents():
     """Recursively reads all markdown files in the wiki directory."""
