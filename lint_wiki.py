@@ -83,59 +83,43 @@ def send_notification(title, message):
         title, message
     ])
 
-def collect_wiki_content_chunks(max_chars=50000):
-    """Recursively reads markdown files and yields chunks to avoid token limits."""
+def collect_wiki_contents():
+    """Recursively reads all markdown files in the wiki directory."""
+    wiki_contents = []
+
     if not WIKI_DIR.exists():
         logging.warning(f"Wiki directory {WIKI_DIR} does not exist.")
-        return []
-
-    chunks = []
-    current_chunk = []
-    current_length = 0
+        return ""
 
     for file_path in WIKI_DIR.rglob("*.md"):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
+                # Store with the relative filepath for context
                 rel_path = file_path.relative_to(VAULT_DIR)
-                file_text = f"### File: {rel_path}\n{content}\n"
-
-                if current_length + len(file_text) > max_chars and current_chunk:
-                    chunks.append("\n".join(current_chunk))
-                    current_chunk = [file_text]
-                    current_length = len(file_text)
-                else:
-                    current_chunk.append(file_text)
-                    current_length += len(file_text)
+                wiki_contents.append(f"### File: {rel_path}\n{content}\n")
         except Exception as e:
             logging.error(f"Failed to read {file_path}: {e}")
 
-    if current_chunk:
-        chunks.append("\n".join(current_chunk))
-
-    return chunks
+    return "\n".join(wiki_contents)
 
 def lint_wiki():
     logging.info("Starting weekly synthesis linter...")
 
-    wiki_chunks = collect_wiki_content_chunks()
+    wiki_payload = collect_wiki_contents()
 
-    if not wiki_chunks:
+    if not wiki_payload.strip():
         logging.info("No wiki contents found to lint.")
         return
 
-    # If there is only one chunk, do a single prompt. If multiple, aggregate.
-    final_report = ""
-    chunk_reports = []
-
-    for idx, chunk in enumerate(wiki_chunks):
-        logging.info(f"Processing chunk {idx + 1} of {len(wiki_chunks)}...")
-        prompt = f"""
+    prompt = f"""
 You are the master Synthesis Linter for an autonomous Obsidian knowledge graph.
-Your singular directive is to audit the provided portion of the wiki graph, looking for the hidden architecture of thought.
+Your singular directive is to audit the entire wiki graph, looking for the hidden architecture of thought.
 
 Review the vault contents provided within the <vault_content> tags below.
-You must produce a highly structured, beautiful Markdown report focusing on the following sections:
+You must produce a highly structured, beautiful Markdown report with the following exact sections:
+
+# 🔮 Weekly Synthesis Report
 
 ## 🚨 Logical Contradictions
 Identify areas where two notes seem to disagree or present conflicting information. Provide the file paths and explain the conflict. If none, say "No contradictions detected."
@@ -147,43 +131,25 @@ Identify concepts or entities that are isolated. Suggest specific existing notes
 Where can two separate notes be merged to form a stronger, unified thesis? Suggest new connections that are not explicitly stated but logically follow.
 
 ## 🛠️ Actionable Recommendations
-Provide a checklist (`- [ ]`) of specific things the user should do to improve the graph's structure or depth based on these files.
+Provide a checklist (`- [ ]`) of 3 to 5 specific things the user should do this week to improve the graph's structure or depth.
 
 <vault_content>
-{chunk}
+{wiki_payload}
 </vault_content>
 """
-        try:
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=prompt,
-            )
-
-            if hasattr(response, 'usage_metadata'):
-                metrics.track_usage("lint_wiki.py", MODEL_NAME, response.usage_metadata)
-
-            chunk_reports.append(response.text)
-
-        except errors.APIError as api_err:
-            logging.error(f"Gemini API Error during synthesis chunk {idx+1}: {api_err}")
-            send_notification("Daemon.md Linter Error", f"Gemini API failed on chunk {idx+1}.")
-            return
-        except Exception as e:
-            logging.error(f"Failed to run synthesis linter on chunk {idx+1}: {e}")
-            send_notification("Daemon.md Linter Error", f"Failed to generate chunk {idx+1}.")
-            return
-
-    # Compile the final report
-    if len(chunk_reports) == 1:
-        final_report = f"# 🔮 Weekly Synthesis Report\n\n{chunk_reports[0]}"
-    else:
-        final_report = "# 🔮 Weekly Synthesis Report\n\n"
-        for i, report in enumerate(chunk_reports):
-            final_report += f"### Part {i+1}\n\n{report}\n\n---\n\n"
 
     try:
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
+        )
+
+        # Track API Token Costs
+        if hasattr(response, 'usage_metadata'):
+            metrics.track_usage("lint_wiki.py", MODEL_NAME, response.usage_metadata)
+
         with open(REPORT_PATH, "w", encoding="utf-8") as f:
-            f.write(final_report)
+            f.write(response.text)
 
         logging.info(f"Successfully generated Maintenance Report at {REPORT_PATH}")
 
