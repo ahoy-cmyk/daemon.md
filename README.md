@@ -20,17 +20,23 @@ A continuous Python process monitoring the `raw/` inbox directory. It uses the `
 2. If the file is an audio recording (e.g., an iPhone Voice Memo), it is securely uploaded to the Gemini API for native transcription and analysis.
 3. The daemon loads `latent_space.json`, providing the LLM with the complete structural topology of the vault.
 4. The context is routed to the configured Gemini model (default: `gemini-3.1-flash-lite-preview`). The model natively outputs a structured JSON array, mapping the transcribed audio or text into interconnected markdown concepts and action items.
-5. Target markdown files are updated or generated, and the raw source file (and remote API upload) is securely deleted.
+5. Target markdown files are updated or generated. The raw source file is **archived** (moved to the `archive/` folder) to preserve the original source of truth. Remote API uploads are securely deleted.
 6. A native macOS push notification is dispatched to confirm completion.
 
-### 2. The Synthesis Linter (`lint_wiki.py`)
+**Manual Edits (The Self-Feedback Loop):**
+If a user manually edits or creates a file inside the `wiki/` directory, the Daemon detects the change, copies the modified file into the `raw/` directory, and archives it. This treats manual human edits as new input, ensuring the AI digests them and preserves them for future rebuilds.
+
+### 2. Full System Rebuilds (`rebuild.py`)
+Because raw notes and audio are archived rather than destroyed, the system can be completely rebuilt. By executing `python rebuild.py`, the user can wipe the generated `wiki/` and `Action_Items/` directories, and sequentially feed the archived history back through the ingestion engine. This allows the vault to be retroactively upgraded when newer, smarter LLMs are released.
+
+### 3. The Synthesis Linter (`lint_wiki.py`)
 A `launchd` scheduled task (cron) executing every Sunday at 3:00 AM.
 The script recursively packages the entire knowledge graph into a secure XML `<vault_content>` payload and routes it to `gemini-3.1-pro-preview`. The reasoning model audits the graph structure and writes a `Maintenance_Report.md` to the vault root containing:
 - Logical contradictions detected across files.
 - Orphaned nodes requiring integration.
 - Structural synthesis opportunities.
 
-### 3. The Latent Space Explorer (`start_visualizer.sh`)
+### 4. The Latent Space Explorer (`start_visualizer.sh`)
 Eager Compilation relies heavily on Obsidian-style `[[Wikilinks]]`. If the LLM generates a wikilink for a concept that does not currently possess a corresponding `.md` file, the engine classifies it as an unresolved **Ghost Node**.
 
 Following every ingestion or lint cycle, `graph_builder.py` parses the vault and generates a deterministic `latent_space.json` map. Running the Vite/React visualizer (`react-force-graph-3d`) renders this topology in a 3D interface, explicitly highlighting Ghost Nodes to identify missing knowledge frontiers.

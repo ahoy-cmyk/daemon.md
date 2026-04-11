@@ -16,6 +16,12 @@ This project does **not** use standard RAG (Retrieval-Augmented Generation) or v
 - **Do not** modify the `rebuild.py` script to duplicate `daemon.py`'s API/Gemini processing logic. It must always import `process_file_core` to stay DRY and future-proof.
 - Tools like `lint_wiki.py` and `graph_builder.py` only care about the generated content in the `wiki/` directory. They must continue to ignore the `archive/` and `raw/` directories.
 
+## ✍️ Manual Edits & The Self-Feedback Loop
+- To allow the user to write their own notes or manually edit AI-generated files without losing those edits during a rebuild, we employ a **"Self-Feedback Loop"**.
+- `daemon.py` actively watches the `wiki/` directory. If it detects a file was created or modified by the user (ignoring its own programmatic writes), it automatically copies that modified file into the `raw/` directory.
+- This forces the system to treat manual edits as "new raw input". The AI digests the manual edit, formalizes it, and the raw copied file is placed into `archive/`.
+- **Result:** Manual edits become part of the archived source of truth, meaning they will be perfectly preserved and re-integrated during a system rebuild.
+
 ## 🔒 Environment & Permissions
 - The Python execution engine runs completely outside of the target Obsidian vault directory to prevent polluting it.
 - We heavily rely on absolute paths derived from the user's `.env`.

@@ -35,6 +35,7 @@ CLEANED_VAULT_PATH = VAULT_PATH_RAW.replace("\\ ", " ").replace("\\~", "~").repl
 VAULT_DIR = Path(CLEANED_VAULT_PATH).expanduser().resolve()
 RAW_DIR = VAULT_DIR / "raw"
 ARCHIVE_DIR = VAULT_DIR / "archive"
+WIKI_DIR = VAULT_DIR / "wiki"
 FAILED_DIR = VAULT_DIR / "failed"
 GEMINI_MD_PATH = VAULT_DIR / "GEMINI.md"
 
@@ -42,6 +43,11 @@ GEMINI_MD_PATH = VAULT_DIR / "GEMINI.md"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 FAILED_DIR.mkdir(parents=True, exist_ok=True)
 ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+WIKI_DIR.mkdir(parents=True, exist_ok=True)
+
+# Track when the daemon writes a file so we don't treat it as a manual user edit
+daemon_written_files = {}
+daemon_write_lock = threading.Lock()
 
 # Configure Gemini
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -249,8 +255,11 @@ NEW RAW CONTENT TO INGEST:
             target_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Always overwrite (as requested for both tasks and wiki_updates to maintain formatting)
-            with open(target_path, "w", encoding="utf-8") as f:
-                f.write(content)
+            with daemon_write_lock:
+                with open(target_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                # Record the exact time we wrote this to ignore the subsequent filesystem event
+                daemon_written_files[str(target_path)] = time.time()
 
             actions_taken.append(f"Updated {target_path.name}")
             logging.info(f"Wrote to {target_path}")
@@ -330,9 +339,49 @@ def handle_file_async(file_path):
     time.sleep(1)
     safe_process_raw_file(file_path)
 
+def handle_wiki_edit_async(file_path):
+    """Processes a manual edit detected in the wiki directory."""
+    path_str = str(file_path)
+    file_path = Path(file_path)
+
+    # Short delay to allow the OS to finish writing the file
+    time.sleep(1)
+
+    with daemon_write_lock:
+        last_written = daemon_written_files.get(path_str, 0)
+        # If the daemon wrote this file within the last 5 seconds, ignore it
+        if time.time() - last_written < 5:
+            return
+
+    logging.info(f"Manual edit detected in wiki: {file_path.name}")
+
+    try:
+        # Copy the edited file into the raw directory to trigger the Self-Feedback Loop
+        dest_path = RAW_DIR / f"manual_edit_{int(time.time())}_{file_path.name}"
+        shutil.copy2(str(file_path), str(dest_path))
+        logging.info(f"Copied manual edit to {dest_path} for ingestion.")
+    except Exception as e:
+        logging.error(f"Failed to capture manual edit for {file_path.name}: {e}")
+
+class WikiFolderHandler(FileSystemEventHandler):
+    def on_modified(self, event):
+        if not event.is_directory and Path(event.src_path).suffix.lower() == '.md':
+            executor.submit(handle_wiki_edit_async, event.src_path)
+
+    def on_created(self, event):
+        if not event.is_directory and Path(event.src_path).suffix.lower() == '.md':
+            executor.submit(handle_wiki_edit_async, event.src_path)
+
+    def on_moved(self, event):
+        if not event.is_directory and Path(event.dest_path).suffix.lower() == '.md':
+            if Path(event.dest_path).is_relative_to(WIKI_DIR):
+                executor.submit(handle_wiki_edit_async, event.dest_path)
+
 class RawFolderHandler(FileSystemEventHandler):
     def on_created(self, event):
         if not event.is_directory and Path(event.src_path).suffix.lower() in SUPPORTED_EXTENSIONS:
+            # Ignore manual_edit files that we just dropped in here so we don't process them twice
+            # The periodic scan will pick them up safely if the event fires concurrently
             executor.submit(handle_file_async, event.src_path)
 
     def on_moved(self, event):
@@ -353,11 +402,14 @@ def periodic_scan():
             safe_process_raw_file(file)
 
 def main():
-    logging.info(f"Starting Daemon.md watching {RAW_DIR} with {POLL_INTERVAL}s polling fallback")
+    logging.info(f"Starting Daemon.md watching {RAW_DIR} and {WIKI_DIR} with {POLL_INTERVAL}s polling fallback")
 
-    event_handler = RawFolderHandler()
+    raw_handler = RawFolderHandler()
+    wiki_handler = WikiFolderHandler()
+
     observer = Observer()
-    observer.schedule(event_handler, str(RAW_DIR), recursive=False)
+    observer.schedule(raw_handler, str(RAW_DIR), recursive=False)
+    observer.schedule(wiki_handler, str(WIKI_DIR), recursive=True)
     observer.start()
 
     # Process any files that are already in the raw directory on startup
