@@ -131,11 +131,10 @@ def process_raw_file(file_path):
 
         graph_context = get_graph_context()
 
-        prompt = f"""
+        system_instruction = f"""
 {master_prompt}
 
 You are an automated knowledge extraction system.
-Analyze the following newly added markdown content.
 
 If the information updates existing knowledge, output a 'wiki_update'. For wiki_updates, you MUST rewrite the ENTIRE existing target file (if any) with the new context seamlessly integrated. Do not just append. We have provided the existing semantic map of the vault below so you know what files already exist to update.
 If the information is an actionable task or an action item executed, output a 'task_completion'.
@@ -149,6 +148,10 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
 ---
 {graph_context}
 ---
+"""
+
+        prompt = f"""
+Analyze the following newly added markdown content.
 
 NEW RAW CONTENT TO INGEST:
 ---
@@ -156,12 +159,13 @@ NEW RAW CONTENT TO INGEST:
 ---
 """
 
-        # Using generation_config for JSON mode
+        # Using generation_config for JSON mode and system instructions
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
+                system_instruction=system_instruction
             )
         )
 
@@ -177,6 +181,8 @@ NEW RAW CONTENT TO INGEST:
             logging.error(f"Raw output: {response.text}")
             # Move to failed directory to prevent infinite retry loops
             failed_path = FAILED_DIR / file_path.name
+            if failed_path.exists():
+                failed_path = FAILED_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
             shutil.move(str(file_path), str(failed_path))
             logging.info(f"Moved unparseable raw file to {failed_path}")
             send_notification("Daemon.md Error", "Failed to parse Gemini output as JSON. File moved to failed/")
@@ -191,6 +197,11 @@ NEW RAW CONTENT TO INGEST:
 
             if not all([update_type, rel_path, content]):
                 logging.warning(f"Incomplete update object: {update}")
+                continue
+
+            # Prevent empty file overwrites
+            if not str(content).strip():
+                logging.warning(f"Skipping empty content update for {rel_path}")
                 continue
 
             target_path = (VAULT_DIR / rel_path).resolve()
@@ -230,6 +241,8 @@ NEW RAW CONTENT TO INGEST:
         # Move to failed directory to prevent infinite retry loops
         try:
             failed_path = FAILED_DIR / file_path.name
+            if failed_path.exists():
+                failed_path = FAILED_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
             shutil.move(str(file_path), str(failed_path))
             logging.info(f"Moved errored raw file to {failed_path}")
             send_notification("Daemon.md Error", f"Failed to process {file_path.name}. File moved to failed/")
@@ -302,6 +315,8 @@ def main():
             periodic_scan()
     except KeyboardInterrupt:
         observer.stop()
+    finally:
+        executor.shutdown(wait=False)
     observer.join()
 
 if __name__ == "__main__":
