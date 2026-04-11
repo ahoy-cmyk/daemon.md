@@ -173,7 +173,7 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
                 temp_path = tmp.name
 
             try:
-                shutil.copy2(str(file_path), temp_path)
+                shutil.copy2(file_path, temp_path)
                 uploaded_file = client.files.upload(file=temp_path)
             finally:
                 if os.path.exists(temp_path):
