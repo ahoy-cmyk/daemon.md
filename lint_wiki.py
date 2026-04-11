@@ -168,18 +168,12 @@ If no automated fixes are needed, output an empty array: ```json\n[]\n```
 
         json_start = response_text.rfind("```json")
         if json_start != -1:
-            # Use rfind for the end tag to handle backticks inside the JSON content
-            json_end = response_text.rfind("```")
-            if json_end > json_start:
+            json_end = response_text.find("```", json_start + 7)
+            if json_end != -1:
                 json_str = response_text[json_start + 7:json_end].strip()
                 markdown_report = response_text[:json_start].strip()
                 try:
-                    decoded = json.loads(json_str)
-                    # Ensure the result is a list of dictionaries
-                    if isinstance(decoded, list):
-                        automated_fixes = [f for f in decoded if isinstance(f, dict)]
-                    else:
-                        logging.error("Automated fixes JSON is not a list.")
+                    automated_fixes = json.loads(json_str)
                 except json.JSONDecodeError as e:
                     logging.error(f"Failed to parse automated fixes JSON: {e}")
 

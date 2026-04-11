@@ -24,8 +24,8 @@ The engine code lives in this repository, entirely separate from your actual not
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/daemon-md.git
-   cd daemon-md
+   git clone https://github.com/ahoy-cmyk/daemon.md.git
+   cd daemon.md
    ```
 2. Copy the environment template:
    ```bash
