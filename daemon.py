@@ -262,10 +262,10 @@ NEW RAW CONTENT TO INGEST:
         # Delete the raw file with retry to avoid iCloud deadlocks
         for attempt in range(3):
             try:
-                file_path.unlink()
+                file_path.unlink(missing_ok=True)
                 logging.info(f"Deleted raw file: {file_path.name}")
                 break
-            except Exception as e:
+            except OSError as e:
                 if attempt == 2:
                     logging.warning(f"Failed to delete raw file {file_path.name} after 3 attempts: {e}")
                 else:
