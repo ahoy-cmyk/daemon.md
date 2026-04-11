@@ -120,6 +120,16 @@ def process_raw_file(file_path):
     if not file_path.exists():
         return
 
+    # Wait for the file to finish writing (e.g., from iCloud or Voice Memos)
+    # Give up after 10 attempts (10 seconds)
+    for _ in range(10):
+        try:
+            if file_path.stat().st_size > 0:
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+
     logging.info(f"Processing new raw file: {file_path.name}")
 
     uploaded_file = None
@@ -155,7 +165,17 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
 
         if is_audio:
             logging.info(f"Uploading audio file to Gemini API: {file_path.name}")
-            uploaded_file = client.files.upload(file=str(file_path))
+            import tempfile
+            # Create a temporary copy of the file to avoid iCloud Resource Deadlock
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_path.suffix) as tmp:
+                temp_path = tmp.name
+
+            try:
+                shutil.copy2(str(file_path), temp_path)
+                uploaded_file = client.files.upload(file=temp_path)
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
 
             prompt = """
 Listen to the attached audio file. Carefully transcribe and analyze the spoken content.
@@ -237,9 +257,17 @@ NEW RAW CONTENT TO INGEST:
             actions_taken.append(f"Updated {target_path.name}")
             logging.info(f"Wrote to {target_path}")
 
-        # Delete the raw file
-        file_path.unlink()
-        logging.info(f"Deleted raw file: {file_path.name}")
+        # Delete the raw file with retry to avoid iCloud deadlocks
+        for attempt in range(3):
+            try:
+                file_path.unlink()
+                logging.info(f"Deleted raw file: {file_path.name}")
+                break
+            except Exception as e:
+                if attempt == 2:
+                    logging.warning(f"Failed to delete raw file {file_path.name} after 3 attempts: {e}")
+                else:
+                    time.sleep(1)
 
         # Update graph JSON
         try:
@@ -253,7 +281,7 @@ NEW RAW CONTENT TO INGEST:
             send_notification("Daemon.md", "Processed file but no actions taken.")
 
     except Exception as e:
-        logging.error(f"Error processing {file_path.name}: {e}")
+        logging.error(f"Error processing {file_path.name}: {e}", exc_info=True)
         # Move to failed directory to prevent infinite retry loops
         try:
             failed_path = FAILED_DIR / file_path.name
