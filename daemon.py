@@ -126,7 +126,9 @@ def process_raw_file(file_path):
         try:
             if file_path.stat().st_size > 0:
                 break
-        except Exception:
+        except FileNotFoundError:
+            return
+        except OSError:
             pass
         time.sleep(1)
 
