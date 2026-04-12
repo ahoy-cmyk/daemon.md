@@ -69,54 +69,52 @@ def rebuild():
         logging.error(f"Archive directory {ARCHIVE_DIR} does not exist.")
         sys.exit(1)
 
-    lock_file = VAULT_DIR / ".rebuild_lock"
+    archived_files = [f for f in ARCHIVE_DIR.iterdir() if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
 
-    try:
-        # Create lock file to pause daemon.py's filesystem watchers
-        with open(lock_file, "w") as f:
-            f.write("REBUILD_IN_PROGRESS")
-        logging.info("Created .rebuild_lock to pause background daemon.")
+    if not archived_files:
+        logging.info("No files found in archive directory to process.")
+        return
 
-        archived_files = [f for f in ARCHIVE_DIR.iterdir() if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
+    # Sort files by timestamp to process in chronological order if possible.
+    archived_files.sort(key=lambda x: x.stat().st_mtime)
 
-        if not archived_files:
-            logging.info("No files found in archive directory to process.")
-            return
+    logging.info(f"Found {len(archived_files)} files in archive. Starting rebuild...")
 
-        # Sort files by timestamp to process in chronological order if possible.
-        archived_files.sort(key=lambda x: x.stat().st_mtime)
+    success_count = 0
+    fail_count = 0
 
-        logging.info(f"Found {len(archived_files)} files in archive. Starting rebuild...")
+    for file_path in archived_files:
+        logging.info(f"Re-processing: {file_path.name}")
+        # Note: We pass is_rebuild=True to skip file size/wait checks since files are fully written
+        success = daemon.process_file_core(file_path, is_rebuild=True)
+        if success:
+            success_count += 1
+        else:
+            fail_count += 1
+            logging.error(f"Failed to process {file_path.name} during rebuild.")
 
-        success_count = 0
-        fail_count = 0
-
-        for file_path in archived_files:
-            logging.info(f"Re-processing: {file_path.name}")
-            # Note: We pass is_rebuild=True to skip file size/wait checks since files are fully written
-            success = daemon.process_file_core(file_path, is_rebuild=True)
-            if success:
-                success_count += 1
-            else:
-                fail_count += 1
-                logging.error(f"Failed to process {file_path.name} during rebuild.")
-
-        logging.info("="*50)
-        logging.info("Rebuild Complete!")
-        logging.info(f"Successfully processed: {success_count}")
-        logging.info(f"Failed to process: {fail_count}")
-        logging.info("="*50)
-
-    finally:
-        # Always remove the lock file so the daemon resumes normal operation
-        if lock_file.exists():
-            lock_file.unlink()
-            logging.info("Removed .rebuild_lock. Background daemon will resume.")
+    logging.info("="*50)
+    logging.info("Rebuild Complete!")
+    logging.info(f"Successfully processed: {success_count}")
+    logging.info(f"Failed to process: {fail_count}")
+    logging.info("="*50)
 
 
 if __name__ == "__main__":
     if confirm_rebuild():
-        clear_generated_content()
-        rebuild()
+        lock_file = VAULT_DIR / ".rebuild_lock"
+        try:
+            # Create lock file to pause daemon.py's filesystem watchers
+            with open(lock_file, "w") as f:
+                f.write("REBUILD_IN_PROGRESS")
+            logging.info("Created .rebuild_lock to pause background daemon.")
+
+            clear_generated_content()
+            rebuild()
+        finally:
+            # Always remove the lock file so the daemon resumes normal operation
+            if lock_file.exists():
+                lock_file.unlink()
+                logging.info("Removed .rebuild_lock. Background daemon will resume.")
     else:
         print("Rebuild aborted.")
