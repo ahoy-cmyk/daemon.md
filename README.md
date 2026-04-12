@@ -1,26 +1,51 @@
-# Daemon.md
+# 🧠 Daemon.md
 
-Daemon.md is a background service that automatically turns your raw notes, thoughts, and voice memos into a structured, interconnected Obsidian wiki.
+![macOS](https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white)
+![Python 3](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Obsidian](https://img.shields.io/badge/Obsidian-483699?style=for-the-badge&logo=obsidian&logoColor=white)
+![Gemini API](https://img.shields.io/badge/Gemini_API-8E75B2?style=for-the-badge&logo=google&logoColor=white)
 
-Inspired by Andrej Karpathy's [LLM Wiki concept](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f), this project moves away from standard RAG (Retrieval-Augmented Generation) databases. Instead, it reads your input, extracts the core concepts, and formally writes actual markdown (`.md`) files directly into your local folder, maintaining a web of `[[Wikilinks]]` for you.
+Daemon.md is a persistent background service that automatically transforms your raw notes, chaotic thoughts, and rambling voice memos into a structured, fully interconnected **Obsidian wiki**.
 
-You drop a voice memo into a folder, and seconds later, your notes are updated, cross-referenced, and organized.
+Inspired by Andrej Karpathy's [LLM Wiki concept](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f), this project fundamentally moves away from standard RAG (Retrieval-Augmented Generation) databases. Instead, it uses **Eager Compilation**: it reads your input immediately, extracts the core concepts, and natively writes actual markdown (`.md`) files directly to your local disk, maintaining a rich web of `[[Wikilinks]]` for you.
 
-*(If you are a developer looking for the technical deep-dive into how the daemon, archiving, and feedback loops work, please read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).)*
+You drop a voice memo into a folder, and seconds later, your vault is updated, cross-referenced, and meticulously organized.
+
+> [!TIP]
+> If you are a developer looking for the technical deep-dive into how the daemon, archiving, and feedback loops work under the hood, please read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
-## Quick Start Guide
+## 🌊 The Workflow
+
+```mermaid
+graph LR
+    A[Raw Notes / Audio] -->|Drop into raw/| B(Daemon.py)
+    B --> C{Gemini API}
+    C -->|Extracts & Structures| B
+    B -->|Writes| D[(Obsidian Wiki)]
+    B -->|Moves original| E[Archive]
+
+    style A fill:#ff9999,stroke:#333,stroke-width:2px,color:#000
+    style B fill:#99ccff,stroke:#333,stroke-width:2px,color:#000
+    style C fill:#cc99ff,stroke:#333,stroke-width:2px,color:#000
+    style D fill:#99ff99,stroke:#333,stroke-width:2px,color:#000
+    style E fill:#ffff99,stroke:#333,stroke-width:2px,color:#000
+```
+
+---
+
+## 🚀 Quick Start Guide
 
 ### Prerequisites
-- **macOS:** Required for the background service and push notifications.
-- **Python 3:** Installed and in your PATH.
-- **Node.js & npm:** Installed (for the 3D visualizer).
+- **macOS:** Required for the background service and native push notifications.
+- **Python 3:** Installed and available in your PATH.
+- **Node.js & npm:** Installed (required for the 3D visualizer).
 - **Obsidian:** Installed on your Mac.
-- **Google Gemini API Key:** Get a free one from [Google AI Studio](https://aistudio.google.com/apikey).
+- **Google Gemini API Key:** Get a free key from [Google AI Studio](https://aistudio.google.com/apikey).
 
 ### Step 1: Setup the Engine
-The engine code lives in this repository, entirely separate from your actual notes.
+The engine code lives in this repository, entirely separate from your actual notes to keep your vault clean.
 
 1. Clone this repository:
    ```bash
@@ -31,70 +56,72 @@ The engine code lives in this repository, entirely separate from your actual not
    ```bash
    cp .env.example .env
    ```
-3. Open `.env` and fill in your API key and the path where you want your new Obsidian Vault to live:
+3. Open `.env` and configure your API key and the desired path for your new Obsidian Vault:
    ```text
    GEMINI_API_KEY="AIzaSyYourKeyHere..."
    VAULT_PATH="~/Documents/My_AI_Vault"
    ```
 
 ### Step 2: Install and Start
-Run the installer script:
+Run the comprehensive installer script:
 ```bash
 ./install.sh
 ```
-This script will:
-- Check your permissions.
-- Build the directory structure in your `VAULT_PATH`.
-- Setup a Python virtual environment and install dependencies.
-- Register the background service with macOS (`launchd`) so it runs silently forever.
+> [!NOTE]
+> This script will verify your permissions, build the directory structure in your `VAULT_PATH`, set up a Python virtual environment, install dependencies, and register the background service natively with macOS (`launchd`) so it runs silently forever.
 
 ### Step 3: Open Obsidian
-1. Open the **Obsidian** app.
+1. Launch the **Obsidian** app.
 2. Click **"Open folder as vault"**.
 3. Select the folder you defined in your `VAULT_PATH` and click **Open**.
 
-You are now ready to go!
+You are now fully operational! 🎉
 
 ---
 
-## How to Use It (Day-to-Day)
+## 📖 How to Use It (Day-to-Day)
 
 ### 1. Ingesting Raw Notes and Audio
-Inside your Vault, you will see a folder called `raw/`.
-This is your inbox.
+Inside your newly created Vault, you will see a folder called `raw/`.
+This serves as your universal inbox.
 
-If you write a quick thought in a `.txt` file, or record a voice memo on your iPhone (`.m4a`) and drop it into the `raw/` folder, the background Daemon will immediately wake up. It will upload the file, transcribe it, analyze it against your existing wiki, and write new or updated markdown files into your `wiki/` folder. You will get a macOS push notification when it is done.
+> [!IMPORTANT]
+> If you write a quick thought in a `.txt` file, or record a voice memo on your iPhone (`.m4a`) and drop it into the `raw/` folder, the background Daemon immediately wakes up.
+
+It effortlessly uploads the file, transcribes it, analyzes it against your existing wiki, and writes new or updated markdown files into your `wiki/` folder. You will receive a satisfying macOS push notification when it finishes.
 
 ### 2. Manual Edits
-You are not locked out of your own notes. If the AI generates a concept page and you want to fix a typo, add a paragraph, or write a completely new page yourself—just do it.
+You are never locked out of your own thoughts. If the AI generates a concept page and you want to fix a typo, add a paragraph, or write a completely new page yourself—just do it.
 
-When you type and save a file inside the `wiki/` folder, the Daemon notices. It automatically copies your manual edit back into the `raw/` inbox. This forces the AI to ingest your human thoughts and formally integrate them into the overall knowledge graph.
+When you type and save a file inside the `wiki/` folder, the Daemon is watching. It automatically copies your manual edit back into the `raw/` inbox. This forces the AI to digest your human input and formally integrate it into the overall knowledge graph.
 
 ### 3. The Source of Truth (Archiving)
-When the Daemon processes a file from the `raw/` folder, it does not delete it. It moves the original file into the `archive/` folder. This means you never lose your original voice memos or unedited notes.
+When the Daemon processes a file from the `raw/` folder, it **never deletes it**. Instead, it moves the original file into the `archive/` folder. This means you will never lose your original voice memos or unedited ramblings.
 
 ### 4. Customizing the AI (GEMINI.md)
 Inside your Vault, you will find a file named `GEMINI.md`. This is the **Master Prompt** for the system.
-Every time the Daemon processes a note, it reads `GEMINI.md` to understand how it should behave.
-You can edit this file to give the AI custom instructions. For example, you can tell it to use a specific tone, categorize notes into new folders, or look out for specific keywords (e.g., "If I mention 'Groceries', always add it to a checklist").
+Every time the Daemon processes a note, it reads `GEMINI.md` to understand precisely how it should behave.
+
+> [!TIP]
+> You can heavily edit this file to give the AI custom instructions. Tell it to use a specific tone, categorize notes into new folders, or look out for specific keywords (e.g., "If I mention 'Groceries', always add it to a specific checklist").
 
 ---
 
-## Available Commands
+## 🛠️ Available Commands
 
-This repository includes several bash scripts to help you manage the system. Run these from the `daemon-md` directory:
+This repository includes several bash scripts to help you seamlessly manage the system. Run these from the `daemon-md` directory:
 
 - `./status.sh`
-  Checks if the background daemon is running, shows you how many API tokens you've used (and the cost), and prints the latest logs.
+  Checks if the background daemon is alive, shows you how many API tokens you've used (and the exact cost), and prints the latest logs.
 
 - `./start_visualizer.sh`
-  Starts a local web server (on `localhost:5173`). Open this in your browser to see a 3D, interactive map of your entire knowledge graph. It highlights "Ghost Nodes" (concepts the AI linked to, but hasn't fully written a page for yet).
+  Spins up a local web server (on `localhost:5173`). Open this in your browser to see a stunning 3D, interactive map of your entire knowledge graph. It smartly highlights **"Ghost Nodes"** (concepts the AI linked to, but hasn't fully written a page for yet).
 
 - `python rebuild.py`
-  Because your original notes are saved in the `archive/`, you can rebuild the entire system from scratch. This script warns you, wipes the generated wiki, and feeds your entire history back through the Daemon. Use this in a year when a much smarter AI model is released to retroactively upgrade all your old notes.
+  Because your original notes are safely stored in the `archive/`, you can rebuild the entire system from scratch. This script warns you, wipes the generated wiki, and sequentially feeds your entire history back through the Daemon. Use this in a year when a much smarter AI model is released to retroactively upgrade all your old notes!
 
 - `./update.sh`
   Pulls the latest code from GitHub and safely restarts the background services.
 
 - `./uninstall.sh`
-  Stops the background services and removes them from macOS. (This does *not* delete your Obsidian Vault or your notes).
+  Stops the background services and removes them from macOS. (This does *not* delete your Obsidian Vault or your actual notes).
