@@ -97,7 +97,7 @@ This is the pulsing heart of the system—a continuous Python background process
 - **Polling Fallback:** Features a configurable fallback polling sweep (`DAEMON_POLL_INTERVAL`) to catch silent sync events from cloud providers like iCloud Drive that notoriously drop FSEvents.
 - **Native Audio Processing:** Natively processes audio files (e.g., iPhone Voice Memos in `.m4a`, `.mp3`, `.wav`). It securely uploads the audio to the Gemini API for native transcription and analysis, then **explicitly deletes** the remote file in a `finally` block to prevent stealthy storage leaks.
 - **Context Optimization:** Feeding a massive vault of markdown files to an LLM on every ingestion is prohibitively expensive and excruciatingly slow. Instead, the daemon feeds the LLM `latent_space.json`—a lightweight structural map of the vault. The LLM smartly uses this map to know what concepts already exist and where to route new information.
-- **Strict Formatting:** The LLM is instructed via `GEMINI.md` to output a strict JSON array. Each object dictates the target file path and the complete markdown content. The python script then securely writes these files directly to disk.
+- **Strict Formatting:** The LLM is strictly constrained via `google-genai` SDK structured outputs (`types.Schema` and `response_mime_type="application/json"`). It outputs a structured JSON array where each object dictates the target file path and the complete markdown content. The python script then securely parses the raw JSON and writes these files directly to disk.
 
 ### 3.2. File Archiving & Full System Rebuilds (`rebuild.py`)
 The system meticulously preserves history to future-proof your knowledge.
@@ -116,8 +116,10 @@ The wiki is not exclusively AI-generated. Users absolutely must be able to write
 ### 3.4. The Synthesis Linter (`lint_wiki.py`)
 A background cron job (scheduled reliably via a macOS `launchd` `.plist` file for Sunday nights).
 - It carefully packages the entire text of the `wiki/` into a secure XML `<vault_content>` payload.
-- It asks a high-powered reasoning model (default: `gemini-3.1-pro-preview`) to comprehensively audit the entire graph.
-- It automatically produces a `Maintenance_Report.md` at the vault root, detailing logical contradictions across notes, identifying orphaned nodes, and suggesting high-level synthesis opportunities.
+- It asks a high-powered reasoning model (default: `gemini-3.1-pro-preview`) to comprehensively audit the entire graph using a strict JSON schema.
+- It outputs a raw JSON object containing both a detailed Markdown report (identifying logical contradictions, orphaned nodes, and synthesis opportunities) and an array of automated file fixes.
+- **Safety Net:** Before applying automated fixes, a diff-check strictly prevents massive truncations by aborting overwrites if an AI hallucinates and reduces a large file by > 50%.
+- It saves the formatted report to `Maintenance_Report.md` at the vault root and seamlessly applies approved automated fixes.
 
 ### 3.5. Latent Space Mapping (`graph_builder.py`)
 After every single ingestion or linting cycle, this script deeply scans the `wiki/` directory.
