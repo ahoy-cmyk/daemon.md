@@ -6,6 +6,7 @@ import logging
 import subprocess
 import shutil
 import threading
+import collections
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from watchdog.observers import Observer
@@ -311,8 +312,31 @@ def move_to_failed(file_path: Path):
         except Exception as unlink_e:
             logging.error(f"Fallback deletion failed for {file_path.name}: {unlink_e}")
 
+# Global tracker for API calls to prevent runaway loops
+api_calls_tracker = collections.deque()
+API_CALL_LIMIT = int(os.getenv("DAEMON_API_CALL_LIMIT", "50"))
+API_CALL_WINDOW = int(os.getenv("DAEMON_API_CALL_WINDOW", "60")) # seconds
+
+def check_circuit_breaker():
+    """Checks if we are in a runaway state. Halts if true."""
+    now = time.time()
+
+    # Remove old timestamps
+    while api_calls_tracker and now - api_calls_tracker[0] > API_CALL_WINDOW:
+        api_calls_tracker.popleft()
+
+    api_calls_tracker.append(now)
+
+    if len(api_calls_tracker) > API_CALL_LIMIT:
+        logging.critical(f"CIRCUIT BREAKER TRIPPED! Exceeded {API_CALL_LIMIT} processing attempts in {API_CALL_WINDOW} seconds. Halting daemon.")
+        send_notification("Daemon.md CRITICAL ERROR", "Runaway process detected. Daemon halted.")
+        # Forcefully exit the entire process to stop the loop
+        os._exit(1)
+
 def process_raw_file(file_path):
     """Wrapper that calls core processing and handles archiving or moving to failed dir."""
+    check_circuit_breaker()
+
     file_path = Path(file_path)
     success = process_file_core(file_path)
     if success:
@@ -374,12 +398,6 @@ def _process_debounced_wiki_edit(file_path):
     if is_rebuild_in_progress():
         return
 
-    with daemon_write_lock:
-        last_written = daemon_written_files.get(path_str, 0)
-        # If the daemon wrote this file within the last 5 seconds, ignore it
-        if time.time() - last_written < 5:
-            return
-
     logging.info(f"Manual edit detected and debounced in wiki: {file_path.name}")
 
     try:
@@ -400,6 +418,16 @@ def _process_debounced_wiki_edit(file_path):
 def handle_wiki_edit_async(file_path):
     """Debounces manual edits to prevent rapid-fire auto-saves from flooding the daemon."""
     path_str = str(file_path)
+
+    if is_rebuild_in_progress():
+        return
+
+    with daemon_write_lock:
+        last_written = daemon_written_files.get(path_str, 0)
+        # If the daemon wrote this file recently (within 5 seconds), it's the daemon's own event.
+        # Check this BEFORE starting the debounce timer.
+        if time.time() - last_written < 5:
+            return
 
     with debounce_lock:
         if path_str in debounce_timers:
