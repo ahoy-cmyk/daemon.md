@@ -136,14 +136,16 @@ Where can two separate notes be merged to form a stronger, unified thesis? Sugge
 ## 🛠️ Actionable Recommendations
 Provide a checklist (`- [ ]`) of 3 to 5 specific things the user should do this week to improve the graph's structure or depth.
 
-Then, after the Markdown report, you MUST output a JSON code block containing the automated file changes needed to apply your recommendations.
-The JSON must be an array of objects, where each object has:
+You MUST output your response strictly as a single JSON object. The JSON object must contain exactly two fields:
+1. `report`: A string containing the entire formatting Markdown report (with the exact sections listed above).
+2. `fixes`: An array of objects representing the automated file changes needed to apply your recommendations.
+
+For each object in the `fixes` array, include:
 - `filepath`: The relative path within the vault where this should be written (e.g., "wiki/concepts/AI.md").
 - `content`: The complete, fully written markdown content to be saved to the file, incorporating the fixes.
 - `reason`: A short explanation of what was fixed (e.g., "Added wikilink to orphaned node").
 
-Output the JSON strictly inside a ```json code block at the very end of your response.
-If no automated fixes are needed, output an empty array: ```json\n[]\n```
+If no automated fixes are needed, `fixes` should be an empty array.
 
 <vault_content>
 {wiki_payload}
@@ -151,9 +153,34 @@ If no automated fixes are needed, output an empty array: ```json\n[]\n```
 """
 
     try:
+        # Define strict JSON schema
+        linter_schema = types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "report": types.Schema(type=types.Type.STRING),
+                "fixes": types.Schema(
+                    type=types.Type.ARRAY,
+                    items=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            "filepath": types.Schema(type=types.Type.STRING),
+                            "content": types.Schema(type=types.Type.STRING),
+                            "reason": types.Schema(type=types.Type.STRING)
+                        },
+                        required=["filepath", "content", "reason"]
+                    )
+                )
+            },
+            required=["report", "fixes"]
+        )
+
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=linter_schema
+            )
         )
 
         # Track API Token Costs
@@ -162,20 +189,14 @@ If no automated fixes are needed, output an empty array: ```json\n[]\n```
 
         response_text = response.text
 
-        # Parse the response to separate the markdown report and the JSON automated fixes
-        markdown_report = response_text
-        automated_fixes = []
-
-        json_start = response_text.rfind("```json")
-        if json_start != -1:
-            json_end = response_text.find("```", json_start + 7)
-            if json_end != -1:
-                json_str = response_text[json_start + 7:json_end].strip()
-                markdown_report = response_text[:json_start].strip()
-                try:
-                    automated_fixes = json.loads(json_str)
-                except json.JSONDecodeError as e:
-                    logging.error(f"Failed to parse automated fixes JSON: {e}")
+        try:
+            parsed_response = json.loads(response_text)
+            markdown_report = parsed_response.get("report", "")
+            automated_fixes = parsed_response.get("fixes", [])
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse JSON response: {e}")
+            markdown_report = "Failed to parse API response as JSON."
+            automated_fixes = []
 
         applied_fixes_log = []
 
@@ -197,6 +218,19 @@ If no automated fixes are needed, output an empty array: ```json\n[]\n```
                 if not target_path.is_relative_to(VAULT_DIR):
                     logging.error(f"Path traversal blocked in automated fix: Attempted to write to {target_path}")
                     continue
+
+                # Safety Net: Prevent massive truncations due to hallucinations
+                if target_path.exists():
+                    try:
+                        with open(target_path, "r", encoding="utf-8") as f:
+                            old_content = f.read()
+
+                        if len(old_content) > 500 and len(content) < len(old_content) * 0.5:
+                            logging.warning(f"Safety trigger: AI tried to reduce file size by > 50%. Skipping {rel_path}.")
+                            applied_fixes_log.append(f"- ⚠️ **Skipped {rel_path}**: AI attempted to truncate > 50% of the file.")
+                            continue
+                    except Exception as e:
+                        logging.error(f"Failed to read existing content for safety check on {target_path}: {e}")
 
                 try:
                     target_path.parent.mkdir(parents=True, exist_ok=True)

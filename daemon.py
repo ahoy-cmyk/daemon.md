@@ -250,12 +250,30 @@ NEW RAW CONTENT TO INGEST:
 """
             api_contents = prompt
 
-        # Using generation_config for JSON mode and system instructions
+        # Define strict JSON schema
+        update_schema = types.Schema(
+            type=types.Type.ARRAY,
+            items=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "type": types.Schema(
+                        type=types.Type.STRING,
+                        enum=["wiki_update", "task_completion"]
+                    ),
+                    "filepath": types.Schema(type=types.Type.STRING),
+                    "content": types.Schema(type=types.Type.STRING)
+                },
+                required=["type", "filepath", "content"]
+            )
+        )
+
+        # Using generation_config for JSON mode, strict schema, and system instructions
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=api_contents,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
+                response_schema=update_schema,
                 system_instruction=system_instruction
             )
         )
@@ -511,6 +529,13 @@ class RawFolderHandler(FileSystemEventHandler):
 
 def periodic_scan():
     """Fallback scanner to catch files if filesystem events fail (common on iCloud)."""
+    # Prune old entries from daemon_written_files to prevent memory leaks
+    now = time.time()
+    with daemon_write_lock:
+        keys_to_delete = [k for k, ts in daemon_written_files.items() if now - ts > 60]
+        for k in keys_to_delete:
+            del daemon_written_files[k]
+
     for file in RAW_DIR.iterdir():
         if file.is_file() and file.suffix.lower() in SUPPORTED_EXTENSIONS:
             safe_process_raw_file(file)
