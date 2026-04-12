@@ -178,6 +178,23 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
         if is_audio:
             logging.info(f"Uploading audio file to Gemini API: {file_path.name}")
             import tempfile
+            import time
+            # Wait for file to be fully downloaded from iCloud before copying
+            retries = 0
+            while retries < 15:
+                try:
+                    stat = file_path.stat()
+                    if stat.st_size > 0:
+                        # Wait a little to see if the size is still changing
+                        time.sleep(0.5)
+                        new_stat = file_path.stat()
+                        if stat.st_size == new_stat.st_size:
+                            break # File seems stable
+                except Exception:
+                    pass
+                time.sleep(1)
+                retries += 1
+
             # Create a temporary copy of the file to avoid iCloud Resource Deadlock
             with tempfile.NamedTemporaryFile(delete=False, suffix=file_path.suffix) as tmp:
                 temp_path = tmp.name
@@ -185,9 +202,15 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
             try:
                 # Do not use shutil.copy2 or shutil.copyfile, as they use fcopyfile which causes
                 # [Errno 11] Resource deadlock avoided on iCloud paths in macOS.
+                # Use raw os reads if possible, or standard chunks
+                chunk_size = 64 * 1024
                 with open(file_path, 'rb') as fsrc:
                     with open(temp_path, 'wb') as fdst:
-                        shutil.copyfileobj(fsrc, fdst)
+                        while True:
+                            chunk = fsrc.read(chunk_size)
+                            if not chunk:
+                                break
+                            fdst.write(chunk)
                 uploaded_file = client.files.upload(file=temp_path)
             finally:
                 if os.path.exists(temp_path):
