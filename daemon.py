@@ -7,6 +7,7 @@ import subprocess
 import shutil
 import threading
 import collections
+import tempfile
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from watchdog.observers import Observer
@@ -177,8 +178,6 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
 
         if is_audio:
             logging.info(f"Uploading audio file to Gemini API: {file_path.name}")
-            import tempfile
-            import time
             # Wait for file to be fully downloaded from iCloud before copying
             retries = 0
             while retries < 15:
@@ -202,15 +201,32 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
             try:
                 # Do not use shutil.copy2 or shutil.copyfile, as they use fcopyfile which causes
                 # [Errno 11] Resource deadlock avoided on iCloud paths in macOS.
-                # Use raw os reads if possible, or standard chunks
+                # Use raw os reads if possible, or standard chunks.
+                # Retry loop to handle transient Errno 11 from iCloud syncing locks.
                 chunk_size = 64 * 1024
-                with open(file_path, 'rb') as fsrc:
-                    with open(temp_path, 'wb') as fdst:
-                        while True:
-                            chunk = fsrc.read(chunk_size)
-                            if not chunk:
-                                break
-                            fdst.write(chunk)
+                copy_success = False
+                copy_attempts = 0
+                while not copy_success and copy_attempts < 5:
+                    try:
+                        with open(file_path, 'rb') as fsrc:
+                            with open(temp_path, 'wb') as fdst:
+                                while True:
+                                    chunk = fsrc.read(chunk_size)
+                                    if not chunk:
+                                        break
+                                    fdst.write(chunk)
+                        copy_success = True
+                    except OSError as e:
+                        if e.errno == 11: # Resource deadlock avoided
+                            copy_attempts += 1
+                            logging.warning(f"Resource deadlock on {file_path.name}, retrying {copy_attempts}/5...")
+                            time.sleep(1)
+                        else:
+                            raise e
+
+                if not copy_success:
+                    raise OSError(f"Failed to copy {file_path.name} after 5 attempts due to resource deadlock.")
+
                 uploaded_file = client.files.upload(file=temp_path)
             finally:
                 if os.path.exists(temp_path):
