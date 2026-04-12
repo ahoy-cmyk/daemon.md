@@ -42,4 +42,8 @@ This project does **not** use standard RAG (Retrieval-Augmented Generation) or v
 - Frontend Visualizer: Node.js, `npm`, Vite, `react-force-graph-3d`. Use standard `npm`, no Bun or pnpm.
 - System Integration: macOS `launchd` for background tasks, `osascript` for native push notifications.
 
+## 📚 Documentation Diligence
+- **Always keep the documentation updated.** Any time you make code changes, add features, or modify the architecture (e.g., adding new `.env` variables or circuit breakers), you **must** update `README.md`, `docs/ARCHITECTURE.md`, or other relevant documentation files.
+- The documentation is the single source of truth for the user. Do not consider a task complete until the documentation accurately reflects the current state of the codebase.
+
 Please follow these architectural constraints carefully when making modifications or adding new features!

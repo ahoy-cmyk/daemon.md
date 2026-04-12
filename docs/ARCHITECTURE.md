@@ -138,8 +138,10 @@ Daemon.md is rigorously engineered to run indefinitely as a local service, imple
 > - The `install.sh` script rigorously validates write permissions before scaffolding.
 > - **Resource Deadlock Avoidance:** Syncing files via iCloud often causes nasty file locks. The daemon strictly avoids high-level syscalls like `shutil.copy` on incoming files. It cleverly utilizes a polling loop (`st_size > 0`), strategic delays, and `unlink(missing_ok=True)` fallbacks with retry logic to ensure the daemon doesn't violently crash on locked files.
 
-### Failure Handling
-To prevent catastrophic infinite retry loops that rapidly drain API credits, if a file causes a JSON parse error or an API failure, it is safely caught by a `try/except` block and immediately moved to the `failed/` directory with a timestamp.
+### Failure Handling & Runaway Protection
+To strictly prevent catastrophic infinite retry loops that rapidly drain API credits, two layers of defense are implemented:
+1. **Quarantine:** If a file causes a JSON parse error or an API failure, it is safely caught by a `try/except` block and immediately moved to the `failed/` directory with a timestamp.
+2. **Circuit Breaker:** The `daemon.py` includes a `check_circuit_breaker()` function that intensely monitors the volume of file processing attempts. If the system detects a runaway process (e.g., exceeding `DAEMON_API_CALL_LIMIT` attempts within `DAEMON_API_CALL_WINDOW` seconds), it will aggressively halt the background daemon and dispatch a critical push notification to the user.
 
 ### Redaction and Logging
 - All Google API usage is precisely extracted (`response.usage_metadata`) and appended to `logs/cost_tracker.jsonl` for deterministic cost auditing.
