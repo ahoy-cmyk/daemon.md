@@ -9,7 +9,7 @@ When evaluating open-source licenses, our primary goal was to find the "most per
 We compared several options, most notably the MIT License and the Apache 2.0 License:
 
 *   **MIT License:** Extremely short, easy to read, and widely understood. It allows anyone to use, modify, distribute, and even sell the code in proprietary software, with the only requirement being to include the original copyright notice and license text.
-*   **Apache 2.0 License:** Also highly permissive, but significantly longer and more complex ("written by lawyers, for lawyers"). Its primary advantage over MIT is an explicit patent grant and protection against patent trolls.
+*   **Apache 2.0 License:** Also highly permissive, but more comprehensive. Its primary advantages over MIT are an explicit patent grant and a patent retaliation clause, which provides protection against patent-related litigation.
 
 ### Conclusion
 
