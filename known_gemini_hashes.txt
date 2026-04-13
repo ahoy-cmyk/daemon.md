@@ -1,0 +1,5 @@
+# This file contains a list of historical SHA256 hashes of the default GEMINI.template.md
+# It is used by update.sh to detect if a user is running a stock version of GEMINI.md
+# so it can be safely updated without overwriting custom instructions.
+
+ea3538569b4118bb5cb17e1c01dd80ebbdd6fd3a011272063bf6287dcb48a20e
