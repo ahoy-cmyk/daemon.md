@@ -118,11 +118,13 @@ When the Daemon processes a file from the `raw/` folder, it **never deletes it**
 Inside your Vault, you will find a file named `GEMINI.md`. This is the **Master Prompt** for the system.
 Every time the Daemon processes a note, it reads `GEMINI.md` to understand precisely how it should behave.
 
-### 6. The Weekly Narrative
-Once a week, the background linter script runs. In addition to fixing broken links and suggesting new synthesis nodes, it reads the last 7 days of your `log.md` file. It uses this chronological data to weave together a beautifully written "Weekly Narrative" journal entry within your `Maintenance_Report.md` file, summarizing exactly what your brain was obsessed with that week.
-
 > [!TIP]
 > You can heavily edit this file to give the AI custom instructions. Tell it to use a specific tone, categorize notes into new folders, or look out for specific keywords (e.g., "If I mention 'Groceries', always add it to a specific checklist").
+>
+> **Note on Updates:** If you leave `GEMINI.md` in its default, stock state, running `./update.sh` will automatically detect and upgrade it if there are improvements to the master prompt. However, as soon as you customize it, the updater will respect your changes and never overwrite them!
+
+### 6. The Weekly Narrative
+Once a week, the background linter script runs. In addition to fixing broken links and suggesting new synthesis nodes, it reads the last 7 days of your `log.md` file. It uses this chronological data to weave together a beautifully written "Weekly Narrative" journal entry within your `Maintenance_Report.md` file, summarizing exactly what your brain was obsessed with that week.
 
 ---
 
