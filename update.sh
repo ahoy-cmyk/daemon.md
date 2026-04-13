@@ -75,8 +75,11 @@ if [ -f .env ]; then
             # Check if their current hash is in our list of known stock hashes
             if [ -n "$CURRENT_USER_HASH" ] && grep -q "^$CURRENT_USER_HASH\$" "$SCRIPT_DIR/known_gemini_hashes.txt"; then
                 echo -e "  [${CYAN}⚙${NC}] Detected stock GEMINI.md. Updating to the latest template..."
-                cp "$SCRIPT_DIR/GEMINI.template.md" "$GEMINI_MD_PATH"
-                echo -e "  [${GREEN}✓${NC}] GEMINI.md updated successfully."
+                if cp "$SCRIPT_DIR/GEMINI.template.md" "$GEMINI_MD_PATH"; then
+                    echo -e "  [${GREEN}✓${NC}] GEMINI.md updated successfully."
+                else
+                    echo -e "  [${YELLOW}!${NC}] Failed to update GEMINI.md. Please check file permissions."
+                fi
             elif [ -n "$CURRENT_USER_HASH" ]; then
                 echo -e "  [${YELLOW}!${NC}] Custom GEMINI.md detected. Skipping automatic prompt update."
             fi
