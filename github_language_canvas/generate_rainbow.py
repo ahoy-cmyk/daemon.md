@@ -42,6 +42,15 @@ def generate_rainbow():
         target_size = max_existing_bytes + (step_size * step)
         padding_needed = target_size - real_size
 
+        if padding_needed <= 0:
+            print(f"[{color}] {ext.upper()}: Real code size ({real_size // 1024} KB) is larger than target ({target_size // 1024} KB).")
+            print(f"  ! This may break the rainbow order. No padding file will be generated for this language.")
+            # Ensure no old padding file exists
+            file_path = os.path.join(PADDING_DIR, f"paint_{color.lower()}.{ext}")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            continue
+
         file_path = os.path.join(PADDING_DIR, f"paint_{color.lower()}.{ext}")
 
         # Determine the correct comment syntax for the language
