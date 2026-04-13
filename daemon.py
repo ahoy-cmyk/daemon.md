@@ -137,11 +137,11 @@ def get_graph_context():
     return '{"nodes":[],"links":[]}'
 
 
-def process_file_core(file_path, is_rebuild=False):
-    """Core logic to process a file with Gemini. Returns True if successful, False otherwise."""
+def process_file_core(file_path, is_rebuild=False, original_timestamp=None):
+    """Core logic to process a file with Gemini. Returns (success_bool, actions_taken_list)."""
     file_path = Path(file_path)
     if not file_path.exists():
-        return False
+        return False, []
 
     if not is_rebuild:
         # Wait for the file to finish writing (e.g., from iCloud or Voice Memos)
@@ -151,7 +151,7 @@ def process_file_core(file_path, is_rebuild=False):
                 if file_path.stat().st_size > 0:
                     break
             except FileNotFoundError:
-                return False
+                return False, []
             except OSError:
                 pass
             time.sleep(1)
@@ -179,6 +179,16 @@ Output your response strictly as a JSON array of objects, where each object has:
 - `type`: Either "wiki_update" or "task_completion"
 - `filepath`: The relative path within the vault where this should be written (e.g., "wiki/concepts/AI.md" or "Action_Items/Task1.md")
 - `content`: The complete, fully written markdown content to be saved to the file.
+
+CRITICAL INSTRUCTION FOR MARKDOWN CONTENT:
+You MUST prepend standard YAML frontmatter to the very top of EVERY markdown file you generate.
+The frontmatter MUST contain `created_at` and `updated_at` fields in ISO 8601 format.
+Example:
+---
+created_at: "2024-05-12T10:30:00Z"
+updated_at: "2024-05-12T10:30:00Z"
+---
+# The Rest Of Your Content
 
 EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowledge base):
 ---
@@ -313,7 +323,7 @@ NEW RAW CONTENT TO INGEST:
         except json.JSONDecodeError as e:
             logging.error(f"Failed to parse Gemini output as JSON: {e}")
             logging.error(f"Raw output: {response.text}")
-            return False
+            return False, []
 
         actions_taken = []
 
@@ -343,10 +353,46 @@ NEW RAW CONTENT TO INGEST:
             # Ensure the directory exists
             target_path.parent.mkdir(parents=True, exist_ok=True)
 
+            # Enforce strict metadata preservation via Python
+            now_iso = datetime.datetime.utcnow().isoformat() + "Z"
+
+            if original_timestamp:
+                try:
+                    # original_timestamp is formatted as "YYYYMMDD_HHMMSS"
+                    dt = datetime.datetime.strptime(original_timestamp, "%Y%m%d_%H%M%S")
+                    created_iso = dt.isoformat() + "Z"
+                except ValueError:
+                    created_iso = now_iso
+            else:
+                # If target exists, try to preserve its original created_at from YAML frontmatter
+                created_iso = now_iso
+                if target_path.exists():
+                    try:
+                        import re
+
+                        with open(target_path, "r", encoding="utf-8") as f:
+                            existing_content = f.read()
+                        match = re.search(
+                            r"^---\n.*?created_at:\s*[\"']?(.*?)[\"']?\n.*?---",
+                            existing_content,
+                            re.DOTALL,
+                        )
+                        if match:
+                            created_iso = match.group(1).strip()
+                    except Exception:
+                        pass
+
+            # Strip LLM's hallucinated frontmatter if present to ensure we enforce the real one
+            import re
+
+            content = re.sub(r"^---\n.*?\n---\n+", "", content, flags=re.DOTALL).strip()
+
+            final_content = f'---\ncreated_at: "{created_iso}"\nupdated_at: "{now_iso}"\n---\n\n{content}'
+
             # Always overwrite (as requested for both tasks and wiki_updates to maintain formatting)
             with daemon_write_lock:
                 with open(target_path, "w", encoding="utf-8") as f:
-                    f.write(content)
+                    f.write(final_content)
                 # Record the exact time we wrote this to ignore the subsequent filesystem event
                 daemon_written_files[str(target_path)] = time.time()
 
@@ -364,11 +410,11 @@ NEW RAW CONTENT TO INGEST:
         else:
             send_notification("Daemon.md", "Processed file but no actions taken.")
 
-        return True
+        return True, actions_taken
 
     except Exception as e:
         logging.error(f"Error processing {file_path.name}: {e}", exc_info=True)
-        return False
+        return False, []
     finally:
         if uploaded_file:
             try:
@@ -441,7 +487,7 @@ def process_raw_file(file_path):
     check_circuit_breaker()
 
     file_path = Path(file_path)
-    success = process_file_core(file_path)
+    success, actions = process_file_core(file_path)
     if success:
         # Move to archive directory
         try:
@@ -453,9 +499,32 @@ def process_raw_file(file_path):
 
             # --- NEW: APPEND TO CONTINUOUS LOG ---
             try:
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                now = datetime.datetime.now()
+                timestamp = now.strftime("%Y%m%d_%H%M%S")
                 log_path = VAULT_DIR / "log.md"
+
+                with daemon_write_lock:
+                    # Implement Monthly Rotation
+                    if log_path.exists():
+                        # Get modification time of current log to check its month
+                        mtime = datetime.datetime.fromtimestamp(
+                            log_path.stat().st_mtime
+                        )
+                        if mtime.year != now.year or mtime.month != now.month:
+                            # It's a new month, rotate the log
+                            logs_archive_dir = ARCHIVE_DIR / "logs"
+                            logs_archive_dir.mkdir(parents=True, exist_ok=True)
+                            archived_log_path = (
+                                logs_archive_dir / f"log_{mtime.strftime('%Y_%m')}.md"
+                            )
+                            shutil.move(str(log_path), str(archived_log_path))
+                            logging.info(
+                                f"Rotated continuous ledger to {archived_log_path}"
+                            )
+
                 log_entry = f"- **[{timestamp}]** Ingested: {file_path.name}\n"
+                for action in actions:
+                    log_entry += f"  - {action}\n"
                 with daemon_write_lock:
                     with open(log_path, "a", encoding="utf-8") as log_file:
                         log_file.write(log_entry)

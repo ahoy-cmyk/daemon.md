@@ -126,8 +126,10 @@ def collect_wiki_contents():
             recent_logs = []
 
             with open(log_path, "r", encoding="utf-8") as f:
+                include_current_block = True
                 for line in f:
-                    # Expected format: "- **[20260412_091500]** Ingested: filename.md"
+                    # Expected format for main entry: "- **[20260412_091500]** Ingested: filename.md"
+                    # Indented format for sub-actions: "  - Updated wiki/concepts/AI.md"
                     match = re.search(r"\[(\d{8}_\d{6})\]", line)
                     if match:
                         try:
@@ -135,13 +137,20 @@ def collect_wiki_contents():
                                 match.group(1), "%Y%m%d_%H%M%S"
                             )
                             if log_time >= seven_days_ago:
+                                include_current_block = True
                                 recent_logs.append(line)
+                            else:
+                                include_current_block = False
                         except ValueError:
-                            # If timestamp parsing fails, skip filtering and append it safely just in case it's valid data
+                            # If timestamp parsing fails, skip filtering and append it safely
+                            include_current_block = True
                             recent_logs.append(line)
                     else:
-                        # Append any lines that don't match the standard format (e.g., custom user notes in the log)
-                        recent_logs.append(line)
+                        # It's either a sub-bullet or a custom user note.
+                        # We only include it if the most recent parent entry was within 7 days,
+                        # or if it's the very first line and we don't know yet.
+                        if include_current_block:
+                            recent_logs.append(line)
 
             if recent_logs:
                 content = "".join(recent_logs)

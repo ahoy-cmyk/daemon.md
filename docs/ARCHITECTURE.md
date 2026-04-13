@@ -113,15 +113,20 @@ The wiki is not exclusively AI-generated. Users absolutely must be able to write
 - If a human edits or creates a file in the `wiki/`, the handler detects it and secretly copies that modified file back into the `raw/` directory with a `manual_edit_` prefix.
 - The AI digests the human edit, formalizes it, and the raw copied file is placed into `archive/`. Therefore, **manual edits become part of the immutable history and easily survive future rebuilds.**
 
-### 3.4. The Synthesis Linter (`lint_wiki.py`)
+### 3.4. The Continuous Ledger & Weekly Narrative
+To bridge the gap between a static encyclopedia and a dynamic "Second Brain," the system maintains a chronological timeline of thoughts.
+- **Continuous Ledger:** Upon successful file processing, `daemon.py` dynamically appends the actions taken (e.g., specific files updated or tasks completed) to a `log.md` file at the root of the vault. To ensure thread safety across concurrent workers, this operation is wrapped in a `daemon_write_lock`. The log is automatically rotated monthly (moved to `archive/logs/log_YYYY_MM.md`) to maintain performance.
+- **Weekly Narrative:** The linter script (`lint_wiki.py`) reads the last 7 days of entries from this `log.md` file and appends it to the LLM context. The model uses this data to write a beautiful, narrative summary of your week's momentum inside the `Maintenance_Report.md`.
+
+### 3.5. The Synthesis Linter (`lint_wiki.py`)
 A background cron job (scheduled reliably via a macOS `launchd` `.plist` file for Sunday nights).
 - It carefully packages the entire text of the `wiki/` into a secure XML `<vault_content>` payload.
 - It asks a high-powered reasoning model (default: `gemini-3.1-pro-preview`) to comprehensively audit the entire graph using a strict JSON schema.
-- It outputs a raw JSON object containing both a detailed Markdown report (identifying logical contradictions, orphaned nodes, and synthesis opportunities) and an array of automated file fixes.
+- It outputs a raw JSON object containing both a detailed Markdown report (identifying logical contradictions, orphaned nodes, synthesis opportunities, and the Weekly Narrative) and an array of automated file fixes.
 - **Safety Net:** Before applying automated fixes, a diff-check strictly prevents massive truncations by aborting overwrites if an AI hallucinates and reduces a large file by > 50%.
 - It saves the formatted report to `Maintenance_Report.md` at the vault root and seamlessly applies approved automated fixes.
 
-### 3.5. Latent Space Mapping (`graph_builder.py`)
+### 3.6. Latent Space Mapping (`graph_builder.py`)
 After every single ingestion or linting cycle, this script deeply scans the `wiki/` directory.
 - It parses all markdown files, meticulously looking for `[[Wikilinks]]`.
 - It dynamically generates a deterministic JSON map (`latent_space.json`) of nodes and edges.
