@@ -4,6 +4,7 @@ import time
 import json
 import logging
 import subprocess
+import datetime
 import shutil
 import threading
 import collections
@@ -32,7 +33,12 @@ if not VAULT_PATH_RAW or not GEMINI_API_KEY:
     sys.exit(1)
 
 # Clean terminal escape characters (e.g. "Mobile\ Documents" -> "Mobile Documents")
-CLEANED_VAULT_PATH = VAULT_PATH_RAW.replace("\\ ", " ").replace("\\~", "~").replace('\\"', '"').replace("\\'", "'")
+CLEANED_VAULT_PATH = (
+    VAULT_PATH_RAW.replace("\\ ", " ")
+    .replace("\\~", "~")
+    .replace('\\"', '"')
+    .replace("\\'", "'")
+)
 
 VAULT_DIR = Path(CLEANED_VAULT_PATH).expanduser().resolve()
 RAW_DIR = VAULT_DIR / "raw"
@@ -60,14 +66,16 @@ MODEL_NAME = os.getenv("GEMINI_MODEL_DAEMON", "gemini-3.1-flash-lite-preview")
 # Configurable polling interval (default to 15 seconds)
 POLL_INTERVAL = int(os.getenv("DAEMON_POLL_INTERVAL", "15"))
 
-SUPPORTED_EXTENSIONS = {'.md', '.txt', '.m4a', '.mp3', '.wav', '.ogg', '.flac', '.aac'}
+SUPPORTED_EXTENSIONS = {".md", ".txt", ".m4a", ".mp3", ".wav", ".ogg", ".flac", ".aac"}
 
 # Configure Robust Rotating Logging
 LOG_DIR = SCRIPT_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+
 class APIRedactingFormatter(logging.Formatter):
     """Custom formatter to ensure API keys are never leaked in logs."""
+
     def __init__(self, fmt, datefmt, api_key):
         super().__init__(fmt, datefmt)
         self.api_key = api_key
@@ -78,36 +86,40 @@ class APIRedactingFormatter(logging.Formatter):
             return original_msg.replace(self.api_key, "***REDACTED_API_KEY***")
         return original_msg
 
+
 from logging.handlers import RotatingFileHandler
 
 log_formatter = APIRedactingFormatter(
-    '%(asctime)s - %(message)s',
-    '%Y-%m-%d %H:%M:%S',
-    GEMINI_API_KEY
+    "%(asctime)s - %(message)s", "%Y-%m-%d %H:%M:%S", GEMINI_API_KEY
 )
 
 log_handler = RotatingFileHandler(
-    LOG_DIR / "daemon.log", maxBytes=5*1024*1024, backupCount=2
+    LOG_DIR / "daemon.log", maxBytes=5 * 1024 * 1024, backupCount=2
 )
 log_handler.setFormatter(log_formatter)
 
 stream_handler = logging.StreamHandler(sys.stdout)
 stream_handler.setFormatter(log_formatter)
 
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[log_handler, stream_handler]
-)
+logging.basicConfig(level=logging.INFO, handlers=[log_handler, stream_handler])
+
 
 def send_notification(title, message):
     """Sends a native macOS push notification safely."""
-    subprocess.run([
-        "osascript",
-        "-e", "on run argv",
-        "-e", "display notification (item 2 of argv) with title (item 1 of argv)",
-        "-e", "end run",
-        title, message
-    ])
+    subprocess.run(
+        [
+            "osascript",
+            "-e",
+            "on run argv",
+            "-e",
+            "display notification (item 2 of argv) with title (item 1 of argv)",
+            "-e",
+            "end run",
+            title,
+            message,
+        ]
+    )
+
 
 def get_graph_context():
     """Reads latent_space.json to provide structural context instead of raw file reads."""
@@ -124,11 +136,12 @@ def get_graph_context():
             logging.error(f"Failed to read graph context: {e}")
     return '{"nodes":[],"links":[]}'
 
-def process_file_core(file_path, is_rebuild=False):
-    """Core logic to process a file with Gemini. Returns True if successful, False otherwise."""
+
+def process_file_core(file_path, is_rebuild=False, original_timestamp=None):
+    """Core logic to process a file with Gemini. Returns (success_bool, actions_taken_list)."""
     file_path = Path(file_path)
     if not file_path.exists():
-        return False
+        return False, []
 
     if not is_rebuild:
         # Wait for the file to finish writing (e.g., from iCloud or Voice Memos)
@@ -138,7 +151,7 @@ def process_file_core(file_path, is_rebuild=False):
                 if file_path.stat().st_size > 0:
                     break
             except FileNotFoundError:
-                return False
+                return False, []
             except OSError:
                 pass
             time.sleep(1)
@@ -167,6 +180,16 @@ Output your response strictly as a JSON array of objects, where each object has:
 - `filepath`: The relative path within the vault where this should be written (e.g., "wiki/concepts/AI.md" or "Action_Items/Task1.md")
 - `content`: The complete, fully written markdown content to be saved to the file.
 
+CRITICAL INSTRUCTION FOR MARKDOWN CONTENT:
+You MUST prepend standard YAML frontmatter to the very top of EVERY markdown file you generate.
+The frontmatter MUST contain `created_at` and `updated_at` fields in ISO 8601 format.
+Example:
+---
+created_at: "2024-05-12T10:30:00Z"
+updated_at: "2024-05-12T10:30:00Z"
+---
+# The Rest Of Your Content
+
 EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowledge base):
 ---
 {graph_context}
@@ -174,7 +197,14 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
 """
 
         # Handle text vs audio files
-        is_audio = file_path.suffix.lower() in {'.m4a', '.mp3', '.wav', '.ogg', '.flac', '.aac'}
+        is_audio = file_path.suffix.lower() in {
+            ".m4a",
+            ".mp3",
+            ".wav",
+            ".ogg",
+            ".flac",
+            ".aac",
+        }
 
         if is_audio:
             logging.info(f"Uploading audio file to Gemini API: {file_path.name}")
@@ -188,14 +218,16 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
                         time.sleep(0.5)
                         new_stat = file_path.stat()
                         if stat.st_size == new_stat.st_size:
-                            break # File seems stable
+                            break  # File seems stable
                 except Exception:
                     pass
                 time.sleep(1)
                 retries += 1
 
             # Create a temporary copy of the file to avoid iCloud Resource Deadlock
-            with tempfile.NamedTemporaryFile(delete=False, suffix=file_path.suffix) as tmp:
+            with tempfile.NamedTemporaryFile(
+                delete=False, suffix=file_path.suffix
+            ) as tmp:
                 temp_path = tmp.name
 
             try:
@@ -208,8 +240,8 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
                 copy_attempts = 0
                 while not copy_success and copy_attempts < 5:
                     try:
-                        with open(file_path, 'rb') as fsrc:
-                            with open(temp_path, 'wb') as fdst:
+                        with open(file_path, "rb") as fsrc:
+                            with open(temp_path, "wb") as fdst:
                                 while True:
                                     chunk = fsrc.read(chunk_size)
                                     if not chunk:
@@ -217,15 +249,19 @@ EXISTING VAULT MAP (JSON nodes/links indicating the current layout of the knowle
                                     fdst.write(chunk)
                         copy_success = True
                     except OSError as e:
-                        if e.errno == 11: # Resource deadlock avoided
+                        if e.errno == 11:  # Resource deadlock avoided
                             copy_attempts += 1
-                            logging.warning(f"Resource deadlock on {file_path.name}, retrying {copy_attempts}/5...")
+                            logging.warning(
+                                f"Resource deadlock on {file_path.name}, retrying {copy_attempts}/5..."
+                            )
                             time.sleep(1)
                         else:
                             raise e
 
                 if not copy_success:
-                    raise OSError(f"Failed to copy {file_path.name} after 5 attempts due to resource deadlock.")
+                    raise OSError(
+                        f"Failed to copy {file_path.name} after 5 attempts due to resource deadlock."
+                    )
 
                 uploaded_file = client.files.upload(file=temp_path)
             finally:
@@ -257,14 +293,13 @@ NEW RAW CONTENT TO INGEST:
                 type=types.Type.OBJECT,
                 properties={
                     "type": types.Schema(
-                        type=types.Type.STRING,
-                        enum=["wiki_update", "task_completion"]
+                        type=types.Type.STRING, enum=["wiki_update", "task_completion"]
                     ),
                     "filepath": types.Schema(type=types.Type.STRING),
-                    "content": types.Schema(type=types.Type.STRING)
+                    "content": types.Schema(type=types.Type.STRING),
                 },
-                required=["type", "filepath", "content"]
-            )
+                required=["type", "filepath", "content"],
+            ),
         )
 
         # Using generation_config for JSON mode, strict schema, and system instructions
@@ -274,12 +309,12 @@ NEW RAW CONTENT TO INGEST:
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=update_schema,
-                system_instruction=system_instruction
-            )
+                system_instruction=system_instruction,
+            ),
         )
 
         # Track API Token Costs
-        if hasattr(response, 'usage_metadata'):
+        if hasattr(response, "usage_metadata"):
             metrics.track_usage("daemon.py", MODEL_NAME, response.usage_metadata)
 
         try:
@@ -288,7 +323,7 @@ NEW RAW CONTENT TO INGEST:
         except json.JSONDecodeError as e:
             logging.error(f"Failed to parse Gemini output as JSON: {e}")
             logging.error(f"Raw output: {response.text}")
-            return False
+            return False, []
 
         actions_taken = []
 
@@ -310,16 +345,54 @@ NEW RAW CONTENT TO INGEST:
 
             # Prevent Directory Traversal
             if not target_path.is_relative_to(VAULT_DIR):
-                logging.error(f"Path traversal blocked: Attempted to write to {target_path}")
+                logging.error(
+                    f"Path traversal blocked: Attempted to write to {target_path}"
+                )
                 continue
 
             # Ensure the directory exists
             target_path.parent.mkdir(parents=True, exist_ok=True)
 
+            # Enforce strict metadata preservation via Python
+            now_iso = datetime.datetime.utcnow().isoformat() + "Z"
+
+            if original_timestamp:
+                try:
+                    # original_timestamp is formatted as "YYYYMMDD_HHMMSS"
+                    dt = datetime.datetime.strptime(original_timestamp, "%Y%m%d_%H%M%S")
+                    created_iso = dt.isoformat() + "Z"
+                except ValueError:
+                    created_iso = now_iso
+            else:
+                # If target exists, try to preserve its original created_at from YAML frontmatter
+                created_iso = now_iso
+                if target_path.exists():
+                    try:
+                        import re
+
+                        with open(target_path, "r", encoding="utf-8") as f:
+                            existing_content = f.read()
+                        match = re.search(
+                            r"^---\n.*?created_at:\s*[\"']?(.*?)[\"']?\n.*?---",
+                            existing_content,
+                            re.DOTALL,
+                        )
+                        if match:
+                            created_iso = match.group(1).strip()
+                    except Exception:
+                        pass
+
+            # Strip LLM's hallucinated frontmatter if present to ensure we enforce the real one
+            import re
+
+            content = re.sub(r"^---\n.*?\n---\n+", "", content, flags=re.DOTALL).strip()
+
+            final_content = f'---\ncreated_at: "{created_iso}"\nupdated_at: "{now_iso}"\n---\n\n{content}'
+
             # Always overwrite (as requested for both tasks and wiki_updates to maintain formatting)
             with daemon_write_lock:
                 with open(target_path, "w", encoding="utf-8") as f:
-                    f.write(content)
+                    f.write(final_content)
                 # Record the exact time we wrote this to ignore the subsequent filesystem event
                 daemon_written_files[str(target_path)] = time.time()
 
@@ -337,18 +410,23 @@ NEW RAW CONTENT TO INGEST:
         else:
             send_notification("Daemon.md", "Processed file but no actions taken.")
 
-        return True
+        return True, actions_taken
 
     except Exception as e:
         logging.error(f"Error processing {file_path.name}: {e}", exc_info=True)
-        return False
+        return False, []
     finally:
         if uploaded_file:
             try:
-                logging.info(f"Deleting uploaded media from Gemini API: {uploaded_file.name}")
+                logging.info(
+                    f"Deleting uploaded media from Gemini API: {uploaded_file.name}"
+                )
                 client.files.delete(name=uploaded_file.name)
             except Exception as e:
-                logging.error(f"Failed to delete uploaded media {uploaded_file.name}: {e}")
+                logging.error(
+                    f"Failed to delete uploaded media {uploaded_file.name}: {e}"
+                )
+
 
 def move_to_failed(file_path: Path):
     """Safely moves a failed file, with a fallback to unlink to prevent infinite loops."""
@@ -357,22 +435,31 @@ def move_to_failed(file_path: Path):
     try:
         failed_path = FAILED_DIR / file_path.name
         if failed_path.exists():
-            failed_path = FAILED_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
+            failed_path = (
+                FAILED_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
+            )
         shutil.move(str(file_path), str(failed_path))
         logging.info(f"Moved errored raw file to {failed_path}")
-        send_notification("Daemon.md Error", f"Failed to process {file_path.name}. File moved to failed/")
+        send_notification(
+            "Daemon.md Error",
+            f"Failed to process {file_path.name}. File moved to failed/",
+        )
     except Exception as move_e:
         logging.error(f"Failed to move {file_path.name} to failed directory: {move_e}")
         try:
             file_path.unlink(missing_ok=True)
-            logging.info(f"Deleted {file_path.name} as a fallback to prevent infinite loop.")
+            logging.info(
+                f"Deleted {file_path.name} as a fallback to prevent infinite loop."
+            )
         except Exception as unlink_e:
             logging.error(f"Fallback deletion failed for {file_path.name}: {unlink_e}")
+
 
 # Global tracker for API calls to prevent runaway loops
 api_calls_tracker = collections.deque()
 API_CALL_LIMIT = int(os.getenv("DAEMON_API_CALL_LIMIT", "50"))
-API_CALL_WINDOW = int(os.getenv("DAEMON_API_CALL_WINDOW", "60")) # seconds
+API_CALL_WINDOW = int(os.getenv("DAEMON_API_CALL_WINDOW", "60"))  # seconds
+
 
 def check_circuit_breaker():
     """Checks if we are in a runaway state. Halts if true."""
@@ -385,31 +472,75 @@ def check_circuit_breaker():
     api_calls_tracker.append(now)
 
     if len(api_calls_tracker) > API_CALL_LIMIT:
-        logging.critical(f"CIRCUIT BREAKER TRIPPED! Exceeded {API_CALL_LIMIT} processing attempts in {API_CALL_WINDOW} seconds. Halting daemon.")
-        send_notification("Daemon.md CRITICAL ERROR", "Runaway process detected. Daemon halted.")
+        logging.critical(
+            f"CIRCUIT BREAKER TRIPPED! Exceeded {API_CALL_LIMIT} processing attempts in {API_CALL_WINDOW} seconds. Halting daemon."
+        )
+        send_notification(
+            "Daemon.md CRITICAL ERROR", "Runaway process detected. Daemon halted."
+        )
         # Forcefully exit the entire process to stop the loop
         os._exit(1)
+
 
 def process_raw_file(file_path):
     """Wrapper that calls core processing and handles archiving or moving to failed dir."""
     check_circuit_breaker()
 
     file_path = Path(file_path)
-    success = process_file_core(file_path)
+    success, actions = process_file_core(file_path)
     if success:
         # Move to archive directory
         try:
-            archive_path = ARCHIVE_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
+            archive_path = (
+                ARCHIVE_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
+            )
             shutil.move(str(file_path), str(archive_path))
             logging.info(f"Archived processed file to {archive_path}")
+
+            # --- NEW: APPEND TO CONTINUOUS LOG ---
+            try:
+                now = datetime.datetime.now()
+                timestamp = now.strftime("%Y%m%d_%H%M%S")
+                log_path = VAULT_DIR / "log.md"
+
+                with daemon_write_lock:
+                    # Implement Monthly Rotation
+                    if log_path.exists():
+                        # Get modification time of current log to check its month
+                        mtime = datetime.datetime.fromtimestamp(
+                            log_path.stat().st_mtime
+                        )
+                        if mtime.year != now.year or mtime.month != now.month:
+                            # It's a new month, rotate the log
+                            logs_archive_dir = ARCHIVE_DIR / "logs"
+                            logs_archive_dir.mkdir(parents=True, exist_ok=True)
+                            archived_log_path = (
+                                logs_archive_dir / f"log_{mtime.strftime('%Y_%m')}.md"
+                            )
+                            shutil.move(str(log_path), str(archived_log_path))
+                            logging.info(
+                                f"Rotated continuous ledger to {archived_log_path}"
+                            )
+
+                log_entry = f"- **[{timestamp}]** Ingested: {file_path.name}\n"
+                for action in actions:
+                    log_entry += f"  - {action}\n"
+                with daemon_write_lock:
+                    with open(log_path, "a", encoding="utf-8") as log_file:
+                        log_file.write(log_entry)
+            except Exception as e:
+                logging.error(f"Failed to append to log.md for {file_path.name}: {e}")
+
         except Exception as e:
             logging.error(f"Failed to move {file_path.name} to archive directory: {e}")
             move_to_failed(file_path)
     else:
         move_to_failed(file_path)
 
+
 processing_files = set()
 processing_lock = threading.Lock()
+
 
 def safe_process_raw_file(file_path):
     """Wrapper to prevent duplicate processing of the same file."""
@@ -431,11 +562,14 @@ def safe_process_raw_file(file_path):
             if path_str in processing_files:
                 processing_files.remove(path_str)
 
+
 # Global ThreadPoolExecutor for background processing
 executor = ThreadPoolExecutor(max_workers=4)
 
+
 def is_rebuild_in_progress():
     return (VAULT_DIR / ".rebuild_lock").exists()
+
 
 def handle_file_async(file_path):
     """Wait briefly, then process the file. This runs in a worker thread."""
@@ -444,8 +578,10 @@ def handle_file_async(file_path):
     time.sleep(1)
     safe_process_raw_file(file_path)
 
+
 debounce_timers = {}
 debounce_lock = threading.Lock()
+
 
 def _process_debounced_wiki_edit(file_path):
     """The actual worker function that runs after the debounce timer finishes."""
@@ -461,7 +597,7 @@ def _process_debounced_wiki_edit(file_path):
         # Copy the edited file into the raw directory to trigger the Self-Feedback Loop
         dest_path = RAW_DIR / f"manual_edit_{int(time.time())}_{file_path.name}"
         # Use standard read/write loop to avoid iCloud macOS `fcopyfile` deadlocks
-        with open(file_path, 'rb') as src, open(dest_path, 'wb') as dst:
+        with open(file_path, "rb") as src, open(dest_path, "wb") as dst:
             shutil.copyfileobj(src, dst)
         logging.info(f"Copied manual edit to {dest_path} for ingestion.")
     except Exception as e:
@@ -471,6 +607,7 @@ def _process_debounced_wiki_edit(file_path):
     with debounce_lock:
         if path_str in debounce_timers:
             del debounce_timers[path_str]
+
 
 def handle_wiki_edit_async(file_path):
     """Debounces manual edits to prevent rapid-fire auto-saves from flooding the daemon."""
@@ -495,37 +632,49 @@ def handle_wiki_edit_async(file_path):
         debounce_timers[path_str] = timer
         timer.start()
 
+
 class WikiFolderHandler(FileSystemEventHandler):
     def on_modified(self, event):
-        if not event.is_directory and Path(event.src_path).suffix.lower() == '.md':
+        if not event.is_directory and Path(event.src_path).suffix.lower() == ".md":
             executor.submit(handle_wiki_edit_async, event.src_path)
 
     def on_created(self, event):
-        if not event.is_directory and Path(event.src_path).suffix.lower() == '.md':
+        if not event.is_directory and Path(event.src_path).suffix.lower() == ".md":
             executor.submit(handle_wiki_edit_async, event.src_path)
 
     def on_moved(self, event):
-        if not event.is_directory and Path(event.dest_path).suffix.lower() == '.md':
+        if not event.is_directory and Path(event.dest_path).suffix.lower() == ".md":
             if Path(event.dest_path).is_relative_to(WIKI_DIR):
                 executor.submit(handle_wiki_edit_async, event.dest_path)
 
+
 class RawFolderHandler(FileSystemEventHandler):
     def on_created(self, event):
-        if not event.is_directory and Path(event.src_path).suffix.lower() in SUPPORTED_EXTENSIONS:
+        if (
+            not event.is_directory
+            and Path(event.src_path).suffix.lower() in SUPPORTED_EXTENSIONS
+        ):
             # Ignore manual_edit files that we just dropped in here so we don't process them twice
             # The periodic scan will pick them up safely if the event fires concurrently
             executor.submit(handle_file_async, event.src_path)
 
     def on_moved(self, event):
         # Catch files moved/renamed into the directory
-        if not event.is_directory and Path(event.dest_path).suffix.lower() in SUPPORTED_EXTENSIONS:
+        if (
+            not event.is_directory
+            and Path(event.dest_path).suffix.lower() in SUPPORTED_EXTENSIONS
+        ):
             if Path(event.dest_path).parent == RAW_DIR:
                 executor.submit(handle_file_async, event.dest_path)
 
     def on_modified(self, event):
         # Catch files synced via iCloud that may bypass creation events
-        if not event.is_directory and Path(event.src_path).suffix.lower() in SUPPORTED_EXTENSIONS:
+        if (
+            not event.is_directory
+            and Path(event.src_path).suffix.lower() in SUPPORTED_EXTENSIONS
+        ):
             executor.submit(handle_file_async, event.src_path)
+
 
 def periodic_scan():
     """Fallback scanner to catch files if filesystem events fail (common on iCloud)."""
@@ -540,8 +689,11 @@ def periodic_scan():
         if file.is_file() and file.suffix.lower() in SUPPORTED_EXTENSIONS:
             safe_process_raw_file(file)
 
+
 def main():
-    logging.info(f"Starting Daemon.md watching {RAW_DIR} and {WIKI_DIR} with {POLL_INTERVAL}s polling fallback")
+    logging.info(
+        f"Starting Daemon.md watching {RAW_DIR} and {WIKI_DIR} with {POLL_INTERVAL}s polling fallback"
+    )
 
     raw_handler = RawFolderHandler()
     wiki_handler = WikiFolderHandler()
@@ -563,6 +715,7 @@ def main():
     finally:
         executor.shutdown(wait=False)
     observer.join()
+
 
 if __name__ == "__main__":
     main()

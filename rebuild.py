@@ -12,10 +12,11 @@ from daemon import ARCHIVE_DIR, VAULT_DIR, FAILED_DIR, SUPPORTED_EXTENSIONS
 # Basic logging setup for the script
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
+
 def confirm_rebuild():
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("⚠️  WARNING: FULL REBUILD INITIATED ⚠️")
-    print("="*50)
+    print("=" * 50)
     print("This action will:")
     print("1. DELETE all contents of wiki/")
     print("2. DELETE all contents of Action_Items/")
@@ -24,7 +25,8 @@ def confirm_rebuild():
     print("\nThis cannot be undone. Are you sure you want to proceed?")
 
     response = input("Type 'Y' to confirm, or any other key to abort: ").strip()
-    return response == 'Y'
+    return response == "Y"
+
 
 def clear_directory(dir_path: Path):
     if not dir_path.exists():
@@ -34,6 +36,7 @@ def clear_directory(dir_path: Path):
             item.unlink()
         elif item.is_dir():
             shutil.rmtree(item)
+
 
 def clear_generated_content():
     logging.info("Clearing existing generated content...")
@@ -62,14 +65,20 @@ def clear_generated_content():
 
     # Re-initialize graph structure
     import graph_builder
+
     graph_builder.build_graph()
+
 
 def rebuild():
     if not ARCHIVE_DIR.exists():
         logging.error(f"Archive directory {ARCHIVE_DIR} does not exist.")
         sys.exit(1)
 
-    archived_files = [f for f in ARCHIVE_DIR.iterdir() if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS]
+    archived_files = [
+        f
+        for f in ARCHIVE_DIR.iterdir()
+        if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
+    ]
 
     if not archived_files:
         logging.info("No files found in archive directory to process.")
@@ -85,19 +94,37 @@ def rebuild():
 
     for file_path in archived_files:
         logging.info(f"Re-processing: {file_path.name}")
+
+        # Extract original timestamp from archive filename: e.g., Voice_Memo_1713000000.m4a -> "20240413_120000"
+        original_timestamp = None
+        try:
+            import re
+            import datetime
+
+            # Look for a 10-digit unix timestamp in the filename
+            match = re.search(r"_(\d{10})(?:\.|$)", file_path.name)
+            if match:
+                unix_ts = int(match.group(1))
+                dt = datetime.datetime.fromtimestamp(unix_ts)
+                original_timestamp = dt.strftime("%Y%m%d_%H%M%S")
+        except Exception as e:
+            logging.warning(f"Could not extract timestamp from {file_path.name}: {e}")
+
         # Note: We pass is_rebuild=True to skip file size/wait checks since files are fully written
-        success = daemon.process_file_core(file_path, is_rebuild=True)
+        success, _ = daemon.process_file_core(
+            file_path, is_rebuild=True, original_timestamp=original_timestamp
+        )
         if success:
             success_count += 1
         else:
             fail_count += 1
             logging.error(f"Failed to process {file_path.name} during rebuild.")
 
-    logging.info("="*50)
+    logging.info("=" * 50)
     logging.info("Rebuild Complete!")
     logging.info(f"Successfully processed: {success_count}")
     logging.info(f"Failed to process: {fail_count}")
-    logging.info("="*50)
+    logging.info("=" * 50)
 
 
 if __name__ == "__main__":

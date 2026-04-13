@@ -90,17 +90,23 @@ This serves as your universal inbox.
 
 It effortlessly uploads the file, transcribes it, analyzes it against your existing wiki, and writes new or updated markdown files into your `wiki/` folder. You will receive a satisfying macOS push notification when it finishes.
 
-### 2. Manual Edits
+### 2. The Continuous Ledger
+Every time the Daemon successfully processes a raw note or audio file, it quietly appends a timestamped entry to `log.md` at the root of your vault. This creates a hard, parseable chronological timeline—a running ticker of your brain's velocity. If you ever need to find a thought based on *when* you had it rather than *what* it was about, the ledger is your breadcrumb trail.
+
+### 3. Manual Edits
 You are never locked out of your own thoughts. If the AI generates a concept page and you want to fix a typo, add a paragraph, or write a completely new page yourself—just do it.
 
 When you type and save a file inside the `wiki/` folder, the Daemon is watching. It automatically copies your manual edit back into the `raw/` inbox. This forces the AI to digest your human input and formally integrate it into the overall knowledge graph.
 
-### 3. The Source of Truth (Archiving)
+### 4. The Source of Truth (Archiving)
 When the Daemon processes a file from the `raw/` folder, it **never deletes it**. Instead, it moves the original file into the `archive/` folder. This means you will never lose your original voice memos or unedited ramblings.
 
-### 4. Customizing the AI (GEMINI.md)
+### 5. Customizing the AI (GEMINI.md)
 Inside your Vault, you will find a file named `GEMINI.md`. This is the **Master Prompt** for the system.
 Every time the Daemon processes a note, it reads `GEMINI.md` to understand precisely how it should behave.
+
+### 6. The Weekly Narrative
+Once a week, the background linter script runs. In addition to fixing broken links and suggesting new synthesis nodes, it reads the last 7 days of your `log.md` file. It uses this chronological data to weave together a beautifully written "Weekly Narrative" journal entry within your `Maintenance_Report.md` file, summarizing exactly what your brain was obsessed with that week.
 
 > [!TIP]
 > You can heavily edit this file to give the AI custom instructions. Tell it to use a specific tone, categorize notes into new folders, or look out for specific keywords (e.g., "If I mention 'Groceries', always add it to a specific checklist").
