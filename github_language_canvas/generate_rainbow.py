@@ -56,9 +56,7 @@ def generate_rainbow():
         file_path = os.path.join(PADDING_DIR, f"paint_{color.lower()}.{ext}")
 
         # Determine the correct comment syntax for the language
-        if ext in ["js", "swift"]:
-            open_comment, close_comment = "/*\n", "\n*/"
-        elif ext == "css":
+        if ext in ["js", "swift", "css"]:
             open_comment, close_comment = "/*\n", "\n*/"
         else:
             open_comment, close_comment = "", ""
