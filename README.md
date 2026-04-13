@@ -23,7 +23,7 @@ You drop a voice memo into a folder, and seconds later, your vault is updated, c
 - **🕸️ Autonomous Auto-linking:** Automatically generates Obsidian `[[Wikilinks]]` between concepts. If you mention a topic that doesn't exist yet, it creates a "ghost node" for future use.
 - **🔄 The Self-Feedback Loop:** When you manually edit an AI-generated note in your vault, the Daemon detects your changes and formally integrates them into the knowledge graph.
 - **📦 Immutable Archiving:** Your original, raw notes and audio files are never deleted. They are safely preserved in an `archive/` folder, acting as your ultimate source of truth.
-- **📖 Weekly Narrative:** A background chron-job synthesizes the past 7 days of your thoughts into a beautifully written weekly journal entry.
+- **📖 Weekly Narrative:** A background service synthesizes the past 7 days of your thoughts into a beautifully written weekly journal entry.
 - **🌐 3D Graph Visualizer:** Spin up an interactive, local 3D map of your entire knowledge graph directly in your browser.
 - **🛡️ Built-in Circuit Breaker:** Protects your API quota by automatically halting the background daemon if it detects an infinite retry loop or excessive usage.
 
