@@ -16,6 +16,19 @@ You drop a voice memo into a folder, and seconds later, your vault is updated, c
 
 ---
 
+## ✨ Features at a Glance
+
+- **⚡ Eager Compilation:** Reads your raw inputs instantly and natively writes interconnected markdown (`.md`) files. No vector databases or RAG necessary.
+- **🎙️ Native Audio Processing:** Drop `.m4a`, `.mp3`, or `.wav` files (like iPhone Voice Memos) into the inbox. It securely transcribes, synthesizes, and deletes the remote audio to prevent leaks.
+- **🕸️ Autonomous Auto-linking:** Automatically generates Obsidian `[[Wikilinks]]` between concepts. If you mention a topic that doesn't exist yet, it creates a "ghost node" for future use.
+- **🔄 The Self-Feedback Loop:** When you manually edit an AI-generated note in your vault, the Daemon detects your changes and formally integrates them into the knowledge graph.
+- **📦 Immutable Archiving:** Your original, raw notes and audio files are never deleted. They are safely preserved in an `archive/` folder, acting as your ultimate source of truth.
+- **📖 Weekly Narrative:** A background chron-job synthesizes the past 7 days of your thoughts into a beautifully written weekly journal entry.
+- **🌐 3D Graph Visualizer:** Spin up an interactive, local 3D map of your entire knowledge graph directly in your browser.
+- **🛡️ Built-in Circuit Breaker:** Protects your API quota by automatically halting the background daemon if it detects an infinite retry loop or excessive usage.
+
+---
+
 ## 🌊 The Workflow
 
 ```mermaid
@@ -131,3 +144,22 @@ This repository includes several bash scripts to help you seamlessly manage the 
 
 - `./uninstall.sh`
   Stops the background services and removes them from macOS. (This does *not* delete your Obsidian Vault or your actual notes).
+
+---
+
+## ❓ Frequently Asked Questions (FAQ)
+
+**Q: Does this upload my personal notes to the cloud?**
+**A:** Yes, the Daemon securely uploads your raw text and audio to the Google Gemini API for processing. However, it explicitly deletes any uploaded audio files immediately after transcription to prevent remote storage leaks, and the resulting markdown files are strictly stored locally on your machine.
+
+**Q: What if the AI hallucinates, messes up my notes, or deletes something?**
+**A:** Your raw notes are entirely safe. The system moves original inputs into an `archive/` folder—it never deletes them. If the AI hallucinates or overwrites something incorrectly, there is a built-in safety net to prevent massive file truncations, and you can completely rebuild your wiki from the `archive/` using `python rebuild.py`.
+
+**Q: Can I manually edit the AI-generated notes?**
+**A:** Yes! The Daemon features a "Self-Feedback Loop." When you manually edit a file in the `wiki/` directory, the background service detects your changes, copies the edit to the inbox, and seamlessly integrates your new thoughts into the knowledge graph.
+
+**Q: How much does the Gemini API cost?**
+**A:** Google offers a free tier for the Gemini API that provides enough capacity for most individual users. If you exceed the free tier, the project includes a local usage tracker—you can run `./status.sh` to check precisely how many tokens you have consumed and the estimated cost.
+
+**Q: Why does this require macOS?**
+**A:** Daemon.md deeply integrates with native macOS tools. It leverages Apple's `launchd` service to ensure the background daemon stays alive forever and uses AppleScript (`osascript`) to send satisfying native desktop push notifications whenever notes are processed or the weekly narrative is generated.
