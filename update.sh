@@ -62,7 +62,7 @@ if [ -f .env ]; then
         VAULT_ABS_PATH="${VAULT_PATH/#\~/$HOME}"
         GEMINI_MD_PATH="$VAULT_ABS_PATH/GEMINI.md"
 
-        if [ -e "$GEMINI_MD_PATH" ] && [ -f "$SCRIPT_DIR/known_gemini_hashes.txt" ]; then
+        if [ -f "$GEMINI_MD_PATH" ] && [ -f "$SCRIPT_DIR/known_gemini_hashes.txt" ]; then
             # Determine correct sha256 checksum command (shasum on macOS, sha256sum on Linux)
             if command -v shasum >/dev/null 2>&1; then
                 CURRENT_USER_HASH=$(shasum -a 256 "$GEMINI_MD_PATH" | awk '{print $1}')
