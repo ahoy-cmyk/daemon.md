@@ -3,6 +3,8 @@ import sys
 import logging
 import subprocess
 import json
+import datetime
+import re
 from pathlib import Path
 from google import genai
 from google.genai import errors
@@ -25,7 +27,12 @@ if not VAULT_PATH_RAW or not GEMINI_API_KEY:
     sys.exit(1)
 
 # Clean terminal escape characters
-CLEANED_VAULT_PATH = VAULT_PATH_RAW.replace("\\ ", " ").replace("\\~", "~").replace('\\"', '"').replace("\\'", "'")
+CLEANED_VAULT_PATH = (
+    VAULT_PATH_RAW.replace("\\ ", " ")
+    .replace("\\~", "~")
+    .replace('\\"', '"')
+    .replace("\\'", "'")
+)
 
 VAULT_DIR = Path(CLEANED_VAULT_PATH).expanduser().resolve()
 WIKI_DIR = VAULT_DIR / "wiki"
@@ -42,8 +49,11 @@ LOG_DIR = SCRIPT_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 import sys
+
+
 class APIRedactingFormatter(logging.Formatter):
     """Custom formatter to ensure API keys are never leaked in logs."""
+
     def __init__(self, fmt, datefmt, api_key):
         super().__init__(fmt, datefmt)
         self.api_key = api_key
@@ -54,36 +64,40 @@ class APIRedactingFormatter(logging.Formatter):
             return original_msg.replace(self.api_key, "***REDACTED_API_KEY***")
         return original_msg
 
+
 from logging.handlers import RotatingFileHandler
 
 log_formatter = APIRedactingFormatter(
-    '%(asctime)s - %(message)s',
-    '%Y-%m-%d %H:%M:%S',
-    GEMINI_API_KEY
+    "%(asctime)s - %(message)s", "%Y-%m-%d %H:%M:%S", GEMINI_API_KEY
 )
 
 log_handler = RotatingFileHandler(
-    LOG_DIR / "linter.log", maxBytes=5*1024*1024, backupCount=2
+    LOG_DIR / "linter.log", maxBytes=5 * 1024 * 1024, backupCount=2
 )
 log_handler.setFormatter(log_formatter)
 
 stream_handler = logging.StreamHandler(sys.stdout)
 stream_handler.setFormatter(log_formatter)
 
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[log_handler, stream_handler]
-)
+logging.basicConfig(level=logging.INFO, handlers=[log_handler, stream_handler])
+
 
 def send_notification(title, message):
     """Sends a native macOS push notification safely."""
-    subprocess.run([
-        "osascript",
-        "-e", "on run argv",
-        "-e", "display notification (item 2 of argv) with title (item 1 of argv)",
-        "-e", "end run",
-        title, message
-    ])
+    subprocess.run(
+        [
+            "osascript",
+            "-e",
+            "on run argv",
+            "-e",
+            "display notification (item 2 of argv) with title (item 1 of argv)",
+            "-e",
+            "end run",
+            title,
+            message,
+        ]
+    )
+
 
 def collect_wiki_contents():
     """Recursively reads all markdown files in the wiki directory."""
@@ -103,17 +117,42 @@ def collect_wiki_contents():
         except Exception as e:
             logging.error(f"Failed to read {file_path}: {e}")
 
-    # Read the continuous ledger (log.md) at the vault root
+    # Read the continuous ledger (log.md) at the vault root, but only keep the last 7 days to save tokens
     log_path = VAULT_DIR / "log.md"
     if log_path.exists():
         try:
+            now = datetime.datetime.now()
+            seven_days_ago = now - datetime.timedelta(days=7)
+            recent_logs = []
+
             with open(log_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                wiki_contents.append(f"### File: log.md\n{content}\n")
+                for line in f:
+                    # Expected format: "- **[20260412_091500]** Ingested: filename.md"
+                    match = re.search(r"\[(\d{8}_\d{6})\]", line)
+                    if match:
+                        try:
+                            log_time = datetime.datetime.strptime(
+                                match.group(1), "%Y%m%d_%H%M%S"
+                            )
+                            if log_time >= seven_days_ago:
+                                recent_logs.append(line)
+                        except ValueError:
+                            # If timestamp parsing fails, skip filtering and append it safely just in case it's valid data
+                            recent_logs.append(line)
+                    else:
+                        # Append any lines that don't match the standard format (e.g., custom user notes in the log)
+                        recent_logs.append(line)
+
+            if recent_logs:
+                content = "".join(recent_logs)
+                wiki_contents.append(
+                    f"### File: log.md (Last 7 Days Only)\n{content}\n"
+                )
         except Exception as e:
             logging.error(f"Failed to read {log_path}: {e}")
 
     return "\n".join(wiki_contents)
+
 
 def lint_wiki():
     logging.info("Starting weekly synthesis linter...")
@@ -178,26 +217,25 @@ If no automated fixes are needed, `fixes` should be an empty array.
                         properties={
                             "filepath": types.Schema(type=types.Type.STRING),
                             "content": types.Schema(type=types.Type.STRING),
-                            "reason": types.Schema(type=types.Type.STRING)
+                            "reason": types.Schema(type=types.Type.STRING),
                         },
-                        required=["filepath", "content", "reason"]
-                    )
-                )
+                        required=["filepath", "content", "reason"],
+                    ),
+                ),
             },
-            required=["report", "fixes"]
+            required=["report", "fixes"],
         )
 
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=prompt,
             config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=linter_schema
-            )
+                response_mime_type="application/json", response_schema=linter_schema
+            ),
         )
 
         # Track API Token Costs
-        if hasattr(response, 'usage_metadata'):
+        if hasattr(response, "usage_metadata"):
             metrics.track_usage("lint_wiki.py", MODEL_NAME, response.usage_metadata)
 
         response_text = response.text
@@ -229,7 +267,9 @@ If no automated fixes are needed, `fixes` should be an empty array.
 
                 # Prevent Directory Traversal
                 if not target_path.is_relative_to(VAULT_DIR):
-                    logging.error(f"Path traversal blocked in automated fix: Attempted to write to {target_path}")
+                    logging.error(
+                        f"Path traversal blocked in automated fix: Attempted to write to {target_path}"
+                    )
                     continue
 
                 # Safety Net: Prevent massive truncations due to hallucinations
@@ -238,19 +278,30 @@ If no automated fixes are needed, `fixes` should be an empty array.
                         with open(target_path, "r", encoding="utf-8") as f:
                             old_content = f.read()
 
-                        if len(old_content) > 500 and len(content) < len(old_content) * 0.5:
-                            logging.warning(f"Safety trigger: AI tried to reduce file size by > 50%. Skipping {rel_path}.")
-                            applied_fixes_log.append(f"- ⚠️ **Skipped {rel_path}**: AI attempted to truncate > 50% of the file.")
+                        if (
+                            len(old_content) > 500
+                            and len(content) < len(old_content) * 0.5
+                        ):
+                            logging.warning(
+                                f"Safety trigger: AI tried to reduce file size by > 50%. Skipping {rel_path}."
+                            )
+                            applied_fixes_log.append(
+                                f"- ⚠️ **Skipped {rel_path}**: AI attempted to truncate > 50% of the file."
+                            )
                             continue
                     except Exception as e:
-                        logging.error(f"Failed to read existing content for safety check on {target_path}: {e}")
+                        logging.error(
+                            f"Failed to read existing content for safety check on {target_path}: {e}"
+                        )
 
                 try:
                     target_path.parent.mkdir(parents=True, exist_ok=True)
                     with open(target_path, "w", encoding="utf-8") as f:
                         f.write(content)
 
-                    logging.info(f"Automated fix applied to {target_path.name}: {reason}")
+                    logging.info(
+                        f"Automated fix applied to {target_path.name}: {reason}"
+                    )
                     applied_fixes_log.append(f"- **{rel_path}**: {reason}")
                 except Exception as e:
                     logging.error(f"Failed to apply fix to {target_path}: {e}")
@@ -280,11 +331,18 @@ If no automated fixes are needed, `fixes` should be an empty array.
         send_notification("Daemon.md Linter", notification_msg)
 
     except errors.APIError as api_err:
-        logging.error(f"Gemini API Error during synthesis (Check token limits or quota): {api_err}")
-        send_notification("Daemon.md Linter Error", "Gemini API failed. See linter logs.")
+        logging.error(
+            f"Gemini API Error during synthesis (Check token limits or quota): {api_err}"
+        )
+        send_notification(
+            "Daemon.md Linter Error", "Gemini API failed. See linter logs."
+        )
     except Exception as e:
         logging.error(f"Failed to run synthesis linter: {e}")
-        send_notification("Daemon.md Linter Error", "Failed to generate Maintenance Report.")
+        send_notification(
+            "Daemon.md Linter Error", "Failed to generate Maintenance Report."
+        )
+
 
 if __name__ == "__main__":
     lint_wiki()
