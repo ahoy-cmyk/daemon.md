@@ -29,14 +29,16 @@ def generate_rainbow():
     print("🌈 Scanning repository and calculating GitHub Linguist sizes...\n")
 
     # 1. Find the largest existing footprint in our target languages
-    max_existing_bytes = max([get_real_code_size(ext) for _, ext, _ in RAINBOW] + [0])
+    # 1. Calculate and store real code sizes for all target languages
+    real_sizes = {ext: get_real_code_size(ext) for _, ext, _ in RAINBOW}
+    max_existing_bytes = max(real_sizes.values() or [0])
 
     # 2. Define our scale. We ensure the smallest step (Purple) is larger than your
     # biggest existing codebase language so the rainbow isn't interrupted.
     step_size = max(50 * 1024, max_existing_bytes // 4) # At least 50KB steps
 
     for color, ext, step in RAINBOW:
-        real_size = get_real_code_size(ext)
+        real_size = real_sizes[ext]
 
         # Calculate strict descending targets
         target_size = max_existing_bytes + (step_size * step)
