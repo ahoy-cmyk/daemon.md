@@ -456,8 +456,9 @@ def process_raw_file(file_path):
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                 log_path = VAULT_DIR / "log.md"
                 log_entry = f"- **[{timestamp}]** Ingested: {file_path.name}\n"
-                with open(log_path, "a", encoding="utf-8") as log_file:
-                    log_file.write(log_entry)
+                with daemon_write_lock:
+                    with open(log_path, "a", encoding="utf-8") as log_file:
+                        log_file.write(log_entry)
             except Exception as e:
                 logging.error(f"Failed to append to log.md for {file_path.name}: {e}")
 
