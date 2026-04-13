@@ -34,7 +34,7 @@ This project does **not** use standard RAG (Retrieval-Augmented Generation) or v
 
 ## 🔒 Environment & Permissions
 - The Python execution engine runs completely outside of the target Obsidian vault directory to prevent polluting it.
-- We heavily rely on absolute paths derived from the user's `.env`.
+- We heavily rely on absolute paths derived from the user's `.env`, which are centralized in `config.py` for all Python scripts.
 - **Security:** iCloud sync paths can cause macOS `Resource deadlock avoided` errors or file locking issues. Always use robust copy/read/unlink loops with `try/except OSError` blocks (as seen in `daemon.py`) rather than assuming immediate file availability.
 - **iCloud Race Conditions:** iCloud sync fires multiple duplicate `modified` events rapidly. Always explicitly check file existence (`if not file_path.exists(): return`) inside processing wrappers before attempting to act on a queued event.
 - All Google API usage is logged and tracked locally for cost monitoring. Always ensure the API keys are scrubbed from log files using the custom `APIRedactingFormatter`.

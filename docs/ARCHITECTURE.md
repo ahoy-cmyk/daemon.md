@@ -152,7 +152,7 @@ To strictly prevent catastrophic infinite retry loops that rapidly drain API cre
 
 ### Redaction and Logging
 - All Google API usage is precisely extracted (`response.usage_metadata`) and appended to `logs/cost_tracker.jsonl` for deterministic cost auditing.
-- A custom `APIRedactingFormatter` intercepts all output within the Python `logging` module, ensuring the user's highly sensitive `GEMINI_API_KEY` is completely scrubbed from disk logs (`daemon.log`, `linter.log`) and standard output streams.
+- A custom `APIRedactingFormatter` intercepts all output within the Python `logging` module, and configuration is centralized in `config.py` for consistent paths and secrets management, ensuring the user's highly sensitive `GEMINI_API_KEY` is completely scrubbed from disk logs (`daemon.log`, `linter.log`) and standard output streams.
 - The logs cleverly use `RotatingFileHandler` constrained to 5MB, effortlessly maintaining a small, deterministic disk footprint.
 
 ### System Integration

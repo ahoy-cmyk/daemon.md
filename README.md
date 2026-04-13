@@ -58,7 +58,7 @@ graph LR
 - **Google Gemini API Key:** Get a free key from [Google AI Studio](https://aistudio.google.com/apikey).
 
 ### Step 1: Setup the Engine
-The engine code lives in this repository, entirely separate from your actual notes to keep your vault clean.
+The engine code lives in this repository, entirely separate from your actual notes to keep your vault clean. Core configurations are centralized in a `config.py` file to maintain a tidy codebase.
 
 1. Clone this repository:
    ```bash

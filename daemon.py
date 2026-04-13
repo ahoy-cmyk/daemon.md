@@ -15,50 +15,27 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from google import genai
 from google.genai import types
-from dotenv import load_dotenv
 import graph_builder
 import metrics
-
-# Configure explicit paths
-SCRIPT_DIR = Path(__file__).parent.resolve()
-
-# Load environment variables explicitly from the script directory
-load_dotenv(SCRIPT_DIR / ".env")
-
-VAULT_PATH_RAW = os.getenv("VAULT_PATH")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not VAULT_PATH_RAW or not GEMINI_API_KEY:
-    print("Error: VAULT_PATH and GEMINI_API_KEY must be set in .env")
-    sys.exit(1)
-
-# Clean terminal escape characters (e.g. "Mobile\ Documents" -> "Mobile Documents")
-CLEANED_VAULT_PATH = (
-    VAULT_PATH_RAW.replace("\\ ", " ")
-    .replace("\\~", "~")
-    .replace('\\"', '"')
-    .replace("\\'", "'")
+import config
+from config import SUPPORTED_EXTENSIONS
+from typing import Dict, Deque
+from config import (
+    VAULT_DIR,
+    RAW_DIR,
+    ARCHIVE_DIR,
+    WIKI_DIR,
+    FAILED_DIR,
+    GEMINI_MD_PATH,
+    SCRIPT_DIR,
 )
-
-VAULT_DIR = Path(CLEANED_VAULT_PATH).expanduser().resolve()
-RAW_DIR = VAULT_DIR / "raw"
-ARCHIVE_DIR = VAULT_DIR / "archive"
-WIKI_DIR = VAULT_DIR / "wiki"
-FAILED_DIR = VAULT_DIR / "failed"
-GEMINI_MD_PATH = VAULT_DIR / "GEMINI.md"
-
-# Ensure directories exist
-RAW_DIR.mkdir(parents=True, exist_ok=True)
-FAILED_DIR.mkdir(parents=True, exist_ok=True)
-ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-WIKI_DIR.mkdir(parents=True, exist_ok=True)
 
 # Track when the daemon writes a file so we don't treat it as a manual user edit
 daemon_written_files = {}
 daemon_write_lock = threading.Lock()
 
 # Configure Gemini
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=config.GEMINI_API_KEY)
 
 # Configurable models (default to 3.1 flash-lite if not provided)
 MODEL_NAME = os.getenv("GEMINI_MODEL_DAEMON", "gemini-3.1-flash-lite-preview")
@@ -66,7 +43,6 @@ MODEL_NAME = os.getenv("GEMINI_MODEL_DAEMON", "gemini-3.1-flash-lite-preview")
 # Configurable polling interval (default to 15 seconds)
 POLL_INTERVAL = int(os.getenv("DAEMON_POLL_INTERVAL", "15"))
 
-SUPPORTED_EXTENSIONS = {".md", ".txt", ".m4a", ".mp3", ".wav", ".ogg", ".flac", ".aac"}
 
 # Configure Robust Rotating Logging
 LOG_DIR = SCRIPT_DIR / "logs"
@@ -76,7 +52,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 class APIRedactingFormatter(logging.Formatter):
     """Custom formatter to ensure API keys are never leaked in logs."""
 
-    def __init__(self, fmt, datefmt, api_key):
+    def __init__(self, fmt, datefmt, api_key=None):
         super().__init__(fmt, datefmt)
         self.api_key = api_key
 
@@ -90,7 +66,7 @@ class APIRedactingFormatter(logging.Formatter):
 from logging.handlers import RotatingFileHandler
 
 log_formatter = APIRedactingFormatter(
-    "%(asctime)s - %(message)s", "%Y-%m-%d %H:%M:%S", GEMINI_API_KEY
+    "%(asctime)s - %(message)s", "%Y-%m-%d %H:%M:%S", config.GEMINI_API_KEY
 )
 
 log_handler = RotatingFileHandler(
@@ -133,7 +109,7 @@ def get_graph_context():
             with open(context_file, "r", encoding="utf-8") as f:
                 return f.read()
         except Exception as e:
-            logging.error(f"Failed to read graph context: {e}")
+            logging.error(f"Failed to read graph context: {e}", exc_info=True)
     return '{"nodes":[],"links":[]}'
 
 
@@ -321,7 +297,7 @@ NEW RAW CONTENT TO INGEST:
             # We expect a JSON array
             updates = json.loads(response.text)
         except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse Gemini output as JSON: {e}")
+            logging.error(f"Failed to parse Gemini output as JSON: {e}", exc_info=True)
             logging.error(f"Raw output: {response.text}")
             return False, []
 
@@ -403,7 +379,9 @@ NEW RAW CONTENT TO INGEST:
         try:
             graph_builder.build_graph()
         except Exception as ge:
-            logging.error(f"Failed to rebuild graph after ingestion: {ge}")
+            logging.error(
+                f"Failed to rebuild graph after ingestion: {ge}", exc_info=True
+            )
 
         if actions_taken:
             send_notification("Daemon.md Updated", ", ".join(actions_taken))
@@ -445,18 +423,24 @@ def move_to_failed(file_path: Path):
             f"Failed to process {file_path.name}. File moved to failed/",
         )
     except Exception as move_e:
-        logging.error(f"Failed to move {file_path.name} to failed directory: {move_e}")
+        logging.error(
+            f"Failed to move {file_path.name} to failed directory: {move_e}",
+            exc_info=True,
+        )
         try:
             file_path.unlink(missing_ok=True)
             logging.info(
                 f"Deleted {file_path.name} as a fallback to prevent infinite loop."
             )
         except Exception as unlink_e:
-            logging.error(f"Fallback deletion failed for {file_path.name}: {unlink_e}")
+            logging.error(
+                f"Fallback deletion failed for {file_path.name}: {unlink_e}",
+                exc_info=True,
+            )
 
 
 # Global tracker for API calls to prevent runaway loops
-api_calls_tracker = collections.deque()
+api_calls_tracker: Deque[float] = collections.deque()
 API_CALL_LIMIT = int(os.getenv("DAEMON_API_CALL_LIMIT", "50"))
 API_CALL_WINDOW = int(os.getenv("DAEMON_API_CALL_WINDOW", "60"))  # seconds
 
@@ -529,10 +513,16 @@ def process_raw_file(file_path):
                     with open(log_path, "a", encoding="utf-8") as log_file:
                         log_file.write(log_entry)
             except Exception as e:
-                logging.error(f"Failed to append to log.md for {file_path.name}: {e}")
+                logging.error(
+                    f"Failed to append to log.md for {file_path.name}: {e}",
+                    exc_info=True,
+                )
 
         except Exception as e:
-            logging.error(f"Failed to move {file_path.name} to archive directory: {e}")
+            logging.error(
+                f"Failed to move {file_path.name} to archive directory: {e}",
+                exc_info=True,
+            )
             move_to_failed(file_path)
     else:
         move_to_failed(file_path)
@@ -579,7 +569,7 @@ def handle_file_async(file_path):
     safe_process_raw_file(file_path)
 
 
-debounce_timers = {}
+debounce_timers: Dict[str, threading.Timer] = {}
 debounce_lock = threading.Lock()
 
 
@@ -601,7 +591,9 @@ def _process_debounced_wiki_edit(file_path):
             shutil.copyfileobj(src, dst)
         logging.info(f"Copied manual edit to {dest_path} for ingestion.")
     except Exception as e:
-        logging.error(f"Failed to capture manual edit for {file_path.name}: {e}")
+        logging.error(
+            f"Failed to capture manual edit for {file_path.name}: {e}", exc_info=True
+        )
 
     # Clean up the timer reference
     with debounce_lock:
@@ -713,7 +705,7 @@ def main():
     except KeyboardInterrupt:
         observer.stop()
     finally:
-        executor.shutdown(wait=False)
+        executor.shutdown(wait=True)
     observer.join()
 
 

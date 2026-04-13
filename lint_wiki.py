@@ -1,45 +1,21 @@
 import os
-import sys
+
 import logging
 import subprocess
 import json
 import datetime
 import re
-from pathlib import Path
 from google import genai
 from google.genai import errors
 from google.genai import types
-from dotenv import load_dotenv
 import graph_builder
 import metrics
-
-# Configure explicit paths
-SCRIPT_DIR = Path(__file__).parent.resolve()
-
-# Load environment variables explicitly from the script directory
-load_dotenv(SCRIPT_DIR / ".env")
-
-VAULT_PATH_RAW = os.getenv("VAULT_PATH")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not VAULT_PATH_RAW or not GEMINI_API_KEY:
-    print("Error: VAULT_PATH and GEMINI_API_KEY must be set in .env")
-    sys.exit(1)
-
-# Clean terminal escape characters
-CLEANED_VAULT_PATH = (
-    VAULT_PATH_RAW.replace("\\ ", " ")
-    .replace("\\~", "~")
-    .replace('\\"', '"')
-    .replace("\\'", "'")
-)
-
-VAULT_DIR = Path(CLEANED_VAULT_PATH).expanduser().resolve()
-WIKI_DIR = VAULT_DIR / "wiki"
-REPORT_PATH = VAULT_DIR / "Maintenance_Report.md"
+import config
+from config import VAULT_DIR, WIKI_DIR, REPORT_PATH, SCRIPT_DIR
+import sys
 
 # Configure Gemini
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=config.GEMINI_API_KEY)
 
 # Configurable models (default to 3.1 pro if not provided)
 MODEL_NAME = os.getenv("GEMINI_MODEL_LINTER", "gemini-3.1-pro-preview")
@@ -48,7 +24,7 @@ MODEL_NAME = os.getenv("GEMINI_MODEL_LINTER", "gemini-3.1-pro-preview")
 LOG_DIR = SCRIPT_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-import sys
+from logging.handlers import RotatingFileHandler
 
 
 class APIRedactingFormatter(logging.Formatter):
@@ -65,10 +41,8 @@ class APIRedactingFormatter(logging.Formatter):
         return original_msg
 
 
-from logging.handlers import RotatingFileHandler
-
 log_formatter = APIRedactingFormatter(
-    "%(asctime)s - %(message)s", "%Y-%m-%d %H:%M:%S", GEMINI_API_KEY
+    "%(asctime)s - %(message)s", "%Y-%m-%d %H:%M:%S", config.GEMINI_API_KEY
 )
 
 log_handler = RotatingFileHandler(
@@ -115,7 +89,7 @@ def collect_wiki_contents():
                 rel_path = file_path.relative_to(VAULT_DIR)
                 wiki_contents.append(f"### File: {rel_path}\n{content}\n")
         except Exception as e:
-            logging.error(f"Failed to read {file_path}: {e}")
+            logging.error(f"Failed to read {file_path}: {e}", exc_info=True)
 
     # Read the continuous ledger (log.md) at the vault root, but only keep the last 7 days to save tokens
     log_path = VAULT_DIR / "log.md"
@@ -158,7 +132,7 @@ def collect_wiki_contents():
                     f"### File: log.md (Last 7 Days Only)\n{content}\n"
                 )
         except Exception as e:
-            logging.error(f"Failed to read {log_path}: {e}")
+            logging.error(f"Failed to read {log_path}: {e}", exc_info=True)
 
     return "\n".join(wiki_contents)
 
@@ -254,7 +228,7 @@ If no automated fixes are needed, `fixes` should be an empty array.
             markdown_report = parsed_response.get("report", "")
             automated_fixes = parsed_response.get("fixes", [])
         except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse JSON response: {e}")
+            logging.error(f"Failed to parse JSON response: {e}", exc_info=True)
             markdown_report = "Failed to parse API response as JSON."
             automated_fixes = []
 
@@ -313,7 +287,9 @@ If no automated fixes are needed, `fixes` should be an empty array.
                     )
                     applied_fixes_log.append(f"- **{rel_path}**: {reason}")
                 except Exception as e:
-                    logging.error(f"Failed to apply fix to {target_path}: {e}")
+                    logging.error(
+                        f"Failed to apply fix to {target_path}: {e}", exc_info=True
+                    )
 
         # Append applied fixes to the Markdown report
         if applied_fixes_log:
@@ -331,7 +307,7 @@ If no automated fixes are needed, `fixes` should be an empty array.
         try:
             graph_builder.build_graph()
         except Exception as ge:
-            logging.error(f"Failed to rebuild graph after linting: {ge}")
+            logging.error(f"Failed to rebuild graph after linting: {ge}", exc_info=True)
 
         notification_msg = "Weekly Maintenance Report generated."
         if applied_fixes_log:
@@ -347,7 +323,7 @@ If no automated fixes are needed, `fixes` should be an empty array.
             "Daemon.md Linter Error", "Gemini API failed. See linter logs."
         )
     except Exception as e:
-        logging.error(f"Failed to run synthesis linter: {e}")
+        logging.error(f"Failed to run synthesis linter: {e}", exc_info=True)
         send_notification(
             "Daemon.md Linter Error", "Failed to generate Maintenance Report."
         )
