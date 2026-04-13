@@ -4,6 +4,7 @@ import time
 import json
 import logging
 import subprocess
+import datetime
 import shutil
 import threading
 import collections
@@ -402,6 +403,17 @@ def process_raw_file(file_path):
             archive_path = ARCHIVE_DIR / f"{file_path.stem}_{int(time.time())}{file_path.suffix}"
             shutil.move(str(file_path), str(archive_path))
             logging.info(f"Archived processed file to {archive_path}")
+
+            # --- NEW: APPEND TO CONTINUOUS LOG ---
+            try:
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                log_path = VAULT_DIR / "log.md"
+                log_entry = f"- **[{timestamp}]** Ingested: {file_path.name}\n"
+                with open(log_path, 'a', encoding='utf-8') as log_file:
+                    log_file.write(log_entry)
+            except Exception as e:
+                logging.error(f"Failed to append to log.md for {file_path.name}: {e}")
+
         except Exception as e:
             logging.error(f"Failed to move {file_path.name} to archive directory: {e}")
             move_to_failed(file_path)

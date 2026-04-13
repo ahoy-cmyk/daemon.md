@@ -103,6 +103,16 @@ def collect_wiki_contents():
         except Exception as e:
             logging.error(f"Failed to read {file_path}: {e}")
 
+    # Read the continuous ledger (log.md) at the vault root
+    log_path = VAULT_DIR / "log.md"
+    if log_path.exists():
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                wiki_contents.append(f"### File: log.md\n{content}\n")
+        except Exception as e:
+            logging.error(f"Failed to read {log_path}: {e}")
+
     return "\n".join(wiki_contents)
 
 def lint_wiki():
@@ -135,6 +145,9 @@ Where can two separate notes be merged to form a stronger, unified thesis? Sugge
 
 ## 🛠️ Actionable Recommendations
 Provide a checklist (`- [ ]`) of 3 to 5 specific things the user should do this week to improve the graph's structure or depth.
+
+## 📅 The Weekly Timeline
+A chronological narrative summarizing the evolution of my thoughts, the data I ingested, and the projects I focused on over the past 7 days. Group this by themes or days to show the momentum of the vault.
 
 You MUST output your response strictly as a single JSON object. The JSON object must contain exactly two fields:
 1. `report`: A string containing the entire formatting Markdown report (with the exact sections listed above).
