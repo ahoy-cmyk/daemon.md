@@ -1,5 +1,4 @@
 import os
-
 import logging
 import subprocess
 import json
@@ -11,8 +10,7 @@ from google.genai import types
 import graph_builder
 import metrics
 import config
-from config import VAULT_DIR, WIKI_DIR, REPORT_PATH, SCRIPT_DIR, APIRedactingFormatter
-import sys
+from config import VAULT_DIR, WIKI_DIR, REPORT_PATH, SCRIPT_DIR
 
 # Configure Gemini
 client = genai.Client(api_key=config.GEMINI_API_KEY)
@@ -25,6 +23,7 @@ LOG_DIR = SCRIPT_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 from logging.handlers import RotatingFileHandler
+import sys
 
 
 class APIRedactingFormatter(logging.Formatter):

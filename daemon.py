@@ -28,7 +28,6 @@ from config import (
     GEMINI_MD_PATH,
     SCRIPT_DIR,
     SUPPORTED_EXTENSIONS,
-    APIRedactingFormatter,
 )
 
 # Track when the daemon writes a file so we don't treat it as a manual user edit
@@ -67,7 +66,7 @@ class APIRedactingFormatter(logging.Formatter):
 from logging.handlers import RotatingFileHandler
 
 log_formatter = APIRedactingFormatter(
-    "%(asctime)s - %(message)s", "%Y-%m-%d %H:%M:%S", config.GEMINI_API_KEY
+    "%(asctime)s - %(message)s", "%Y-%m-%d %H:%M:%S", GEMINI_API_KEY
 )
 
 log_handler = RotatingFileHandler(

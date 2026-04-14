@@ -1,13 +1,9 @@
 import os
 import sys
-import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Configure explicit paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
-
-# Load environment variables explicitly from the script directory
 load_dotenv(SCRIPT_DIR / ".env")
 
 VAULT_PATH_RAW = os.getenv("VAULT_PATH")
@@ -17,7 +13,6 @@ if not VAULT_PATH_RAW or not GEMINI_API_KEY:
     print("Error: VAULT_PATH and GEMINI_API_KEY must be set in .env")
     sys.exit(1)
 
-# Clean terminal escape characters (e.g. "Mobile\ Documents" -> "Mobile Documents")
 CLEANED_VAULT_PATH = (
     VAULT_PATH_RAW.replace("\\ ", " ")
     .replace("\\~", "~")
@@ -33,23 +28,8 @@ FAILED_DIR = VAULT_DIR / "failed"
 GEMINI_MD_PATH = VAULT_DIR / "GEMINI.md"
 REPORT_PATH = VAULT_DIR / "Maintenance_Report.md"
 
-# Supported file extensions
 SUPPORTED_EXTENSIONS = {".md", ".txt", ".m4a", ".mp3", ".wav", ".ogg", ".flac", ".aac"}
 
-class APIRedactingFormatter(logging.Formatter):
-    """Custom formatter to ensure API keys are never leaked in logs."""
-
-    def __init__(self, fmt, datefmt, api_key=None):
-        super().__init__(fmt, datefmt)
-        self.api_key = api_key
-
-    def format(self, record):
-        original_msg = super().format(record)
-        if self.api_key and self.api_key in original_msg:
-            return original_msg.replace(self.api_key, "***REDACTED_API_KEY***")
-        return original_msg
-
-# Ensure directories exist
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 WIKI_DIR.mkdir(parents=True, exist_ok=True)
