@@ -17,9 +17,8 @@ from google import genai
 from google.genai import types
 import graph_builder
 import metrics
-import config
-from config import SUPPORTED_EXTENSIONS
 from typing import Dict, Deque
+import config
 from config import (
     VAULT_DIR,
     RAW_DIR,
@@ -28,6 +27,8 @@ from config import (
     FAILED_DIR,
     GEMINI_MD_PATH,
     SCRIPT_DIR,
+    SUPPORTED_EXTENSIONS,
+    APIRedactingFormatter,
 )
 
 # Track when the daemon writes a file so we don't treat it as a manual user edit

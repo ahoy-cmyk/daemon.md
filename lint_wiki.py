@@ -11,7 +11,7 @@ from google.genai import types
 import graph_builder
 import metrics
 import config
-from config import VAULT_DIR, WIKI_DIR, REPORT_PATH, SCRIPT_DIR
+from config import VAULT_DIR, WIKI_DIR, REPORT_PATH, SCRIPT_DIR, APIRedactingFormatter
 import sys
 
 # Configure Gemini
