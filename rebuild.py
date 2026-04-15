@@ -1,13 +1,11 @@
-import os
 import sys
 import shutil
 import logging
 from pathlib import Path
-from dotenv import load_dotenv
 
 # Import core processing from daemon.py
 import daemon
-from daemon import ARCHIVE_DIR, VAULT_DIR, FAILED_DIR, SUPPORTED_EXTENSIONS
+from config import ARCHIVE_DIR, VAULT_DIR, SUPPORTED_EXTENSIONS
 
 # Basic logging setup for the script
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
